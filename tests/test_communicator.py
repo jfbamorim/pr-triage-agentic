@@ -149,6 +149,15 @@ def test_a_dossier_needs_the_cost_center_and_the_requester(tmp_path):
     assert brief.recipient_email == "maria.santos@exemplo.pt"
 
 
+def test_clauses_that_are_not_in_the_briefing_are_rejected(tmp_path):
+    ctx, pr_id = setup(tmp_path)
+    brief = brief_for(ctx, pr_id)
+    invented = GOOD.model_copy(update={"body": GOOD.body + " Ver também a cláusula 4.3 e as cláusulas 1.3 e 2.1."})
+    problems = check_email(invented, brief)
+    assert any("not in the briefing: ['1.3', '4.3']" in p for p in problems)
+    assert check_email(GOOD, brief) == []
+
+
 def test_persistent_bad_output_is_a_failure_with_the_reasons(tmp_path):
     ctx, pr_id = setup(tmp_path)
     bad = GOOD.model_copy(update={"body": "O pedido de 2 Monitores, de 800 €, foi aprovado, sem mais."})

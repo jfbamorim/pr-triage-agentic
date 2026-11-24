@@ -164,6 +164,15 @@ def _unknown_names(text: str, brief: CommunicationBrief) -> list[str]:
     return sorted(set(NAME.findall(text)))
 
 
+CLAUSE_REFS = re.compile(
+    r"cl[áa]usulas?\s+(\d+\.\d+(?:\s*(?:,|e|ou)\s*\d+\.\d+)*)", re.IGNORECASE
+)
+
+
+def _cited_numbers(text: str) -> set[str]:
+    return {n for group in CLAUSE_REFS.findall(text) for n in re.findall(r"\d+\.\d+", group)}
+
+
 def check_email(draft: EmailDraft, brief: CommunicationBrief) -> list[str]:
     problems: list[str] = []
     text = f"{draft.subject}\n{draft.body}"
@@ -186,6 +195,9 @@ def check_email(draft: EmailDraft, brief: CommunicationBrief) -> list[str]:
             problems.append("a dossier must name the cost center")
         if facts.requester_name not in text:
             problems.append("a dossier must name the requester")
+    unknown_clauses = sorted(_cited_numbers(text) - {c.clause for c in brief.clauses})
+    if unknown_clauses:
+        problems.append(f"the email cites clauses that are not in the briefing: {unknown_clauses}")
     for clause in brief.clauses:
         number = re.escape(clause.clause)
         if not re.search(rf"(?<![\d.]){number}(?![\d])", draft.body):
