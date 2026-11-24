@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import unicodedata
 from collections.abc import Callable
 from contextlib import closing
 from datetime import datetime, timezone
@@ -83,6 +84,33 @@ CREATE TABLE IF NOT EXISTS actions (
     result_json TEXT NOT NULL, created_at TEXT NOT NULL
 );
 """
+
+
+def _normalize(text: str) -> str:
+    decomposed = unicodedata.normalize("NFD", text.lower())
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def _singulars(term: str) -> list[str]:
+    forms = [term]
+    if term.endswith("eis"):
+        forms.append(term[:-3] + "il")
+    if term.endswith("ais"):
+        forms.append(term[:-3] + "al")
+    if term.endswith("es") and len(term) > 4:
+        forms.append(term[:-2])
+    if term.endswith("s") and len(term) > 3:
+        forms.append(term[:-1])
+    return forms
+
+
+def _search_terms(query: str | None) -> list[list[str]]:
+    words = [w for w in _normalize(query or "").split() if len(w) >= 2]
+    return [_singulars(word) for word in words]
+
+
+def _matches(name: str, terms: list[list[str]]) -> bool:
+    return all(any(form in name for form in forms) for forms in terms)
 
 
 def _utc_now() -> datetime:
@@ -236,15 +264,17 @@ class ErpStore:
         self._enter("search_catalog")
         sql = "SELECT * FROM catalog_items WHERE 1 = 1"
         params: list = []
-        if query:
-            sql += " AND LOWER(name) LIKE ?"
-            params.append(f"%{query.lower()}%")
         if category:
             sql += " AND category = ?"
             params.append(category.value)
         with closing(self.connect()) as conn:
             rows = conn.execute(sql + " ORDER BY sku", params).fetchall()
-        return [CatalogItem(**{**dict(r), "available": bool(r["available"])}) for r in rows]
+        terms = _search_terms(query)
+        return [
+            CatalogItem(**{**dict(r), "available": bool(r["available"])})
+            for r in rows
+            if _matches(_normalize(r["name"]), terms)
+        ]
 
     def get_pr(self, pr_id: int) -> PrRecord | None:
         self._enter("get_pr")

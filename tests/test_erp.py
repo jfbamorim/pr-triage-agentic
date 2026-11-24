@@ -180,3 +180,14 @@ def test_quotes_and_human_approval_round_trip(tmp_path):
     )
     erp.record_human_approval("a1", approval)
     assert erp.get_human_approval(pr_id) == approval
+
+
+def test_catalog_search_tolerates_plurals_and_accents(tmp_path):
+    erp = make(tmp_path)
+    assert [i.sku for i in erp.search_catalog("monitores")] == ["MON-27"]
+    assert {i.sku for i in erp.search_catalog("portáteis")} == {"LT-14", "LT-16"}
+    assert {i.sku for i in erp.search_catalog("PORTATIL")} == {"LT-14", "LT-16"}
+    assert {i.sku for i in erp.search_catalog("cadeiras")} == {"CHR-01", "CHR-02"}
+    assert [i.sku for i in erp.search_catalog("monitor", Category.IT_EQUIPMENT)] == ["MON-27"]
+    assert erp.search_catalog("monitores", Category.FURNITURE) == []
+    assert erp.search_catalog("submarino") == []
