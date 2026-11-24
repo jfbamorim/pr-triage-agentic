@@ -1,276 +1,294 @@
-import html
+import os
 from pathlib import Path
 
 import streamlit as st
-from openai import OpenAI
+from dotenv import load_dotenv
 
-from pr_triage.domain.band import Band
-from pr_triage.domain.labels import (
-    BAND_LABELS,
-    ESCALATION_LABELS,
-    FIELD_LABELS,
-    format_eur,
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
+
+from agentic_runtime import get_runtime
+from agentic_views import (
+    STATUS_LABELS,
+    agent_cards,
+    assistant_message,
+    banner,
+    erp_card,
+    investigation,
+    request_card,
+    timeline,
 )
-from pr_triage.domain.schemas import WorkflowResult
-from pr_triage.domain.status import Reason, Status
-from pr_triage.service import Outcome, iter_process_message
-from pr_triage.workflow import Step, StepEvent
+from pr_triage.domain.labels import format_eur
+from pr_triage.erp.models import Role
+from pr_triage.supervisor.actions import record_human_decision, record_quote
+from pr_triage.supervisor.moves import quotes_short
+from pr_triage.supervisor.state import RunStatus
 
 CSS_PATH = Path(__file__).parent / "style.css"
-
-STEP_LABELS = {
-    Step.SCREENING: "Verificar o texto",
-    Step.EXTRACTION: "Extrair os dados do pedido",
-    Step.VALIDATION: "Validar os dados",
-    Step.BAND: "Determinar o escalão",
-    Step.POLICY: "Consultar a política de compras",
-    Step.DECISION: "Decisão",
-    Step.SUMMARY: "Explicar o resultado",
-}
-STATE_ICONS = {"pending": "", "running": "", "done": "✓", "failed": "✕"}
-EXAMPLES = [
-    (
-        "Cadeiras de escritório, 800 €",
-        "Preciso de 5 cadeiras de escritório, 800 euros, centro de custo 1500",
-    ),
-    (
-        "Cadeiras de escritório, 7 000 €",
-        "Preciso de 3 cadeiras de escritório, 7000 euros, centro de custo 1500",
-    ),
-    (
-        "Licenças de software, 2 400 €",
-        "Preciso de 5 licenças de software de design, 2400 euros, centro de custo 1180",
-    ),
+APPROVER = "maria.santos@exemplo.pt"
+REQUESTER_ROLE, APPROVER_ROLE = "Requerente", "Aprovador"
+AVATARS = {"user": "🧑", "assistant": "🤖", "approver": "🧑‍💼"}
+SCENARIOS = [
+    ("Aprovação automática", "ana.silva@exemplo.pt", "Preciso de 2 monitores para a equipa, cerca de 600 euros",
+     "Abaixo de 1 000 €: o agente decide sozinho e o efeito é verificado no ERP."),
+    ("Contrato-quadro", "ana.silva@exemplo.pt", "Preciso de 5 monitores, total 1445 euros",
+     "Há contrato-quadro em vigor, por isso não são precisas cotações."),
+    ("Cotações em falta", "rui.costa@exemplo.pt", "Preciso de uma consultoria de 3000 euros, 10 dias, centro de custo CC-FAC-200",
+     "Pausa e pede cotações; retoma quando forem registadas."),
+    ("Acima do limite", "ana.silva@exemplo.pt", "Preciso de 10 portáteis, 14000 euros",
+     "Acima de 5 000 €: dossiê para a direção, só avança com aprovação humana."),
+    ("Memória", "tiago.lopes@exemplo.pt", "Preciso de 3 monitores, 900 euros",
+     "Sem centro de custo: sugere o último usado, com origem e validade."),
+    ("Orçamento insuficiente", "sofia.matos@exemplo.pt", "Preciso de 5 monitores, 1445 euros",
+     "Confirma o saldo no ERP e não aprova."),
 ]
 
 
-@st.cache_resource
-def get_client() -> OpenAI:
-    return OpenAI()
+def queue(kind: str, **args) -> None:
+    st.session_state.pending = (kind, args)
 
 
-def initial_states() -> dict:
-    return {step: ("pending", "") for step in Step}
+def use_scenario(email: str, text: str) -> None:
+    st.session_state.role = REQUESTER_ROLE
+    st.session_state.email = email
+    queue("start", text=text, email=email)
 
 
-def reset() -> None:
-    st.session_state.request_id = None
-    st.session_state.result = None
-    st.session_state.steps = None
-    st.session_state.text = ""
+def open_run(run_id: str) -> None:
+    st.session_state.run_id = run_id
 
 
-def set_example(text: str) -> None:
-    st.session_state.text = text
+def new_mails(runtime, state) -> list[dict]:
+    if not state.pr_id:
+        return []
+    seen = st.session_state.setdefault("seen_mails", {}).setdefault(state.run_id, set())
+    mails = []
+    for mail in runtime.erp.get_outbox(state.pr_id):
+        if mail.id not in seen:
+            seen.add(mail.id)
+            mails.append({"to": mail.to_addr, "subject": mail.subject, "body": mail.body})
+    return mails
 
 
-def render_stepper(states: dict) -> str:
-    rows = []
-    for step in Step:
-        state, detail = states[step]
-        detail_html = (
-            f'<div class="step-detail">{html.escape(detail)}</div>' if detail else ""
-        )
-        rows.append(
-            f'<div class="step"><div class="step-icon {state}">{STATE_ICONS[state]}</div>'
-            f'<div><div class="step-label">{STEP_LABELS[step]}</div>{detail_html}</div></div>'
-        )
-    return '<div class="stepper">' + "".join(rows) + "</div>"
-
-
-def banner(kind: str, icon: str, text: str) -> str:
-    return (
-        f'<div class="banner {kind}"><span>{icon}</span>'
-        f"<span>{html.escape(text)}</span></div>"
+def say(run_id: str, role: str, text: str, mails: list[dict] | None = None) -> None:
+    st.session_state.setdefault("chat", {}).setdefault(run_id, []).append(
+        {"role": role, "text": text, "mails": mails or []}
     )
 
 
-def format_value(value) -> str:
-    if value is None or value == "":
-        return "—"
-    return html.escape(str(value))
+def ensure_chat(runtime, state) -> list[dict]:
+    chat = st.session_state.setdefault("chat", {})
+    if state.run_id not in chat:
+        chat[state.run_id] = [{"role": "user", "text": text, "mails": []} for text in state.messages]
+        say(state.run_id, "assistant", assistant_message(state, runtime.erp), new_mails(runtime, state))
+    return chat[state.run_id]
 
 
-def clause_body(text: str) -> str:
-    if text.startswith("Documento:") and "\n" in text:
-        return text.split("\n", 1)[1].strip()
-    return text
+def render_message(entry: dict) -> None:
+    with st.chat_message(entry["role"], avatar=AVATARS[entry["role"]]):
+        st.markdown(entry["text"])
+        for mail in entry["mails"]:
+            with st.expander(f"✉ Email para {mail['to']}: {mail['subject']}"):
+                st.write(mail["body"])
 
 
-def render_request(result: WorkflowResult) -> str:
-    request = result.request
-    rows = [
-        ("Item", format_value(request.item)),
-        ("Quantidade", format_value(request.quantity)),
-        ("Valor estimado", format_eur(request.estimated_value_eur)),
-        ("Centro de custo", format_value(request.cost_center)),
-    ]
-    items = "".join(f"<dt>{label}</dt><dd>{value}</dd>" for label, value in rows)
-    return f'<dl class="kv">{items}</dl>'
+def run_pending(runtime, boxes) -> None:
+    kind, args = st.session_state.pop("pending")
+    run_id = args.get("run_id") or st.session_state.get("run_id")
 
+    def draw(state, working=None):
+        boxes.markdown(agent_cards(state, working), unsafe_allow_html=True)
 
-def render_usage(result: WorkflowResult) -> None:
-    if not result.calls:
-        return
-    count = len(result.calls)
-    tokens = sum(c.input_tokens + c.output_tokens for c in result.calls)
-    latency = sum(c.latency for c in result.calls)
-    noun = "chamada" if count == 1 else "chamadas"
-    st.markdown(
-        f'<div class="muted">{count} {noun} · {tokens} tokens · {latency:.1f} s</div>',
-        unsafe_allow_html=True,
+    orchestrator = runtime.orchestrator(
+        observer=lambda state: draw(state), on_step=lambda state, choice: draw(state, choice.move)
     )
+    if kind == "start":
+        with st.chat_message("user", avatar=AVATARS["user"]):
+            st.markdown(args["text"])
+        with st.chat_message("assistant", avatar=AVATARS["assistant"]):
+            st.markdown("A tratar do pedido…")
+        state = orchestrator.start(args["text"], args["email"])
+        st.session_state.run_id = run_id = state.run_id
+        say(run_id, "user", args["text"])
+    elif kind == "reply":
+        say(run_id, "user", args["text"])
+        state = orchestrator.reply(run_id, args["text"])
+    elif kind == "quote":
+        current = runtime.store.load(run_id)
+        record_quote(runtime.erp, current, args["supplier_id"], args["amount"])
+        say(run_id, "user", f"Registei uma cotação de {format_eur(args['amount'])} do fornecedor {args['supplier_name']}.")
+        state = orchestrator.resume(run_id)
+    elif kind == "decision":
+        current = runtime.store.load(run_id)
+        record_human_decision(runtime.erp, current, APPROVER, args["approve"])
+        verdict = "aprovou" if args["approve"] else "rejeitou"
+        say(run_id, "approver", f"Maria Santos {verdict} o pedido nº {current.pr_id}.")
+        state = orchestrator.resume(run_id)
+        st.session_state.run_id = run_id
+    else:
+        state = orchestrator.resume(run_id)
+    say(run_id, "assistant", assistant_message(state, runtime.erp), new_mails(runtime, state))
 
 
-def render_result(result: WorkflowResult) -> None:
-    if result.status == Status.REJECTED:
-        if result.reason == Reason.SUSPICIOUS_ACTIVITY:
-            text = "Pedido rejeitado: atividade suspeita"
-        else:
-            text = "Pedido rejeitado: dados inválidos — " + ", ".join(
-                FIELD_LABELS[f] for f in result.invalid
-            )
-        st.markdown(banner("red", "✕", text), unsafe_allow_html=True)
-        return
+def sidebar(runtime) -> None:
+    st.radio("Agir como", [REQUESTER_ROLE, APPROVER_ROLE], key="role", horizontal=True)
+    people = {p.email: p for p in runtime.erp.find_people_by_role(Role.REQUESTER.value)}
+    if st.session_state.role == REQUESTER_ROLE:
+        st.selectbox("Requerente", list(people), key="email", format_func=lambda e: people[e].name)
 
-    if result.status == Status.NEEDS_INFO:
-        missing = ", ".join(FIELD_LABELS[f] for f in result.missing)
-        text = result.follow_up or f"Faltam dados: {missing}"
-        st.markdown(banner("amber", "💬", text), unsafe_allow_html=True)
+    st.markdown('<div class="card-title side-title">Cenários</div>', unsafe_allow_html=True)
+    for title, email, text, shows in SCENARIOS:
+        st.button(title, key=f"sc-{title}", on_click=use_scenario, args=(email, text), use_container_width=True)
+        st.caption(shows)
+
+    st.markdown('<div class="card-title side-title">Pedidos recentes</div>', unsafe_allow_html=True)
+    for state in runtime.store.list_recent(6):
+        item = state.request.item if state.request and state.request.item else state.messages[0][:24]
+        st.button(
+            f"{item} · {STATUS_LABELS[state.status]}",
+            key=f"run-{state.run_id}",
+            on_click=open_run,
+            args=(state.run_id,),
+            use_container_width=True,
+        )
+
+
+def quote_form(runtime, state) -> None:
+    suppliers = [s for s in runtime.erp.list_suppliers() if s.approved]
+    with st.chat_message("assistant", avatar=AVATARS["assistant"]):
+        st.markdown("Regista as cotações que recebeste:")
+        supplier = st.selectbox("Fornecedor", suppliers, key="quote_supplier", format_func=lambda s: f"{s.name}")
+        amount = st.number_input("Valor (€)", min_value=0.0, step=50.0, key="quote_amount")
+        st.button(
+            "Registar cotação e retomar",
+            disabled=amount <= 0,
+            on_click=queue,
+            args=("quote",),
+            kwargs={"supplier_id": supplier.id, "supplier_name": supplier.name, "amount": amount},
+        )
+
+
+def conversation(runtime, state) -> None:
+    if state is None:
         st.markdown(
-            f'<div class="muted">Em falta: {html.escape(missing)}. '
-            "Responde na caixa à esquerda.</div>",
+            '<div class="muted">Escreve um pedido na caixa em baixo ou escolhe um cenário na barra lateral.</div>',
             unsafe_allow_html=True,
         )
         return
+    for entry in ensure_chat(runtime, state):
+        render_message(entry)
+    if state.status == RunStatus.WAITING_USER and state.investigation is not None and quotes_short(state):
+        quote_form(runtime, state)
+    elif state.status in (RunStatus.RUNNING, RunStatus.FAILED):
+        st.button("Retomar", on_click=queue, args=("resume",))
 
-    if result.escalation:
-        text = "Encaminhar para ação manual: " + ESCALATION_LABELS[result.escalation]
-        st.markdown(banner("orange", "⚠", text), unsafe_allow_html=True)
-    elif result.band == Band.NO_BLOCKERS:
-        st.markdown(banner("green", "✓", BAND_LABELS[result.band]), unsafe_allow_html=True)
-    else:
-        st.markdown(banner("amber", "?", BAND_LABELS[result.band]), unsafe_allow_html=True)
 
-    cited = set(result.summary.cited_chunk_ids) if result.summary else set()
-    col_summary, col_request = st.columns([3, 2], gap="medium")
-
-    with col_summary.container(border=True):
-        st.markdown('<div class="card-title">Resumo</div>', unsafe_allow_html=True)
-        if result.summary:
-            st.write(result.summary.text)
-            clauses = [e.clause for e in result.evidence if e.chunk_id in cited]
+def approvals(runtime) -> None:
+    waiting = [s for s in runtime.store.list_recent(30) if s.status == RunStatus.WAITING_HUMAN]
+    st.markdown("**Maria Santos · Direção** — pedidos à espera da tua decisão")
+    if not waiting:
+        st.markdown('<div class="muted">Nenhum pedido pendente.</div>', unsafe_allow_html=True)
+    for state in waiting:
+        dossier = next((m for m in runtime.erp.get_outbox(state.pr_id) if m.kind == "dossier"), None)
+        with st.container(border=True):
             st.markdown(
-                f'<span class="chip">Cláusulas citadas: {" · ".join(clauses)}</span>',
+                f'<div class="card-title">Pedido nº {state.pr_id} · {state.request.item} · '
+                f"{format_eur(state.request.estimated_value_eur)}</div>",
                 unsafe_allow_html=True,
             )
+            if dossier:
+                st.write(dossier.body)
+            left, right, _ = st.columns([1, 1, 4])
+            left.button("Aprovar", key=f"ap-{state.run_id}", type="primary", on_click=queue, args=("decision",),
+                        kwargs={"run_id": state.run_id, "approve": True})
+            right.button("Rejeitar", key=f"rj-{state.run_id}", on_click=queue, args=("decision",),
+                         kwargs={"run_id": state.run_id, "approve": False})
+
+
+def how_it_decided(runtime, state) -> None:
+    if state is None:
+        st.markdown('<div class="muted">Ainda não há nenhum pedido.</div>', unsafe_allow_html=True)
+        return
+    left, right = st.columns([3, 2], gap="medium")
+    with left:
+        with st.container(border=True):
+            st.markdown('<div class="card-title">Verificações e parecer</div>', unsafe_allow_html=True)
+            st.markdown(investigation(state), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="card-title">Passos do supervisor</div>', unsafe_allow_html=True)
+            st.markdown(timeline(state), unsafe_allow_html=True)
+    with right:
+        with st.container(border=True):
+            st.markdown('<div class="card-title">Pedido</div>', unsafe_allow_html=True)
+            st.markdown(request_card(state), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown('<div class="card-title">Estado no ERP</div>', unsafe_allow_html=True)
+            st.markdown(erp_card(state, runtime.erp), unsafe_allow_html=True)
+
+
+def memory(runtime, email: str) -> None:
+    entries = runtime.memory.history(email)
+    st.markdown(f"Memória guardada para **{email}**")
+    if not entries:
+        st.markdown('<div class="muted">Sem memória guardada.</div>', unsafe_allow_html=True)
+    for e in entries:
+        origin = f"pedido nº {e.origin_pr_id}" if e.origin_pr_id else e.source
+        st.markdown(f"`{e.key}` = **{e.value}** · {e.status} · origem: {origin} · válida até {e.valid_until:%d/%m/%Y}")
+    if entries:
+        st.button("Esquecer centro de custo", on_click=lambda: runtime.memory.forget(email, "cost_center"))
+
+
+def main() -> None:
+    st.set_page_config(page_title="PR Triage Agentic", page_icon="🧾", layout="wide")
+    st.html(f"<style>{CSS_PATH.read_text()}</style>")
+    st.markdown(
+        '<div class="topbar"><div class="topbar-icon">🧾</div>'
+        '<div><div class="topbar-title">PR Triage Agentic</div>'
+        '<div class="muted">O modelo propõe, o Python decide.</div></div></div>',
+        unsafe_allow_html=True,
+    )
+    if not os.getenv("OPENAI_API_KEY"):
+        st.error("Falta a OPENAI_API_KEY no ficheiro .env.")
+        return
+
+    runtime = get_runtime()
+    st.session_state.setdefault("role", REQUESTER_ROLE)
+    with st.sidebar:
+        sidebar(runtime)
+
+    run_id = st.session_state.get("run_id")
+    state = runtime.store.load(run_id) if run_id else None
+    boxes = st.empty()
+    boxes.markdown(agent_cards(state), unsafe_allow_html=True)
+
+    if "pending" in st.session_state:
+        run_pending(runtime, boxes)
+        st.rerun()
+
+    if state is not None:
+        st.markdown(banner(state), unsafe_allow_html=True)
+
+    first = "Conversa" if st.session_state.role == REQUESTER_ROLE else "Aprovações"
+    tab_main, tab_how, tab_memory = st.tabs([first, "Como decidiu", "Memória"])
+    with tab_main:
+        if st.session_state.role == REQUESTER_ROLE:
+            conversation(runtime, state)
         else:
-            st.markdown('<div class="muted">Resumo indisponível.</div>', unsafe_allow_html=True)
+            approvals(runtime)
+    with tab_how:
+        how_it_decided(runtime, state)
+    with tab_memory:
+        memory(runtime, state.requester_email if state else st.session_state.get("email", "ana.silva@exemplo.pt"))
 
-    with col_request.container(border=True):
-        st.markdown('<div class="card-title">Pedido</div>', unsafe_allow_html=True)
-        st.markdown(render_request(result), unsafe_allow_html=True)
-
-    with st.container(border=True):
-        st.markdown(
-            '<div class="card-title">Evidência da política</div>', unsafe_allow_html=True
-        )
-        for evidence in result.evidence:
-            score = f" · score {evidence.score:.2f}" if evidence.score is not None else ""
-            mark = "📌 " if evidence.chunk_id in cited else ""
-            with st.expander(f"{mark}{evidence.clause} · {evidence.title}{score}"):
-                st.caption(f"{evidence.document} ({evidence.source})")
-                st.write(clause_body(evidence.text))
+    if st.session_state.role == REQUESTER_ROLE:
+        waiting = state is not None and state.status == RunStatus.WAITING_USER
+        prompt = st.chat_input("Responde ao assistente…" if waiting else "Descreve o que precisas…")
+        if prompt:
+            if waiting:
+                queue("reply", text=prompt)
+            else:
+                queue("start", text=prompt, email=st.session_state.get("email", "ana.silva@exemplo.pt"))
+            st.rerun()
 
 
-st.set_page_config(page_title="Triagem de requisições de compra", layout="wide")
-st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
-st.session_state.setdefault("request_id", None)
-st.session_state.setdefault("result", None)
-st.session_state.setdefault("steps", None)
-st.session_state.setdefault("text", "")
-if st.session_state.pop("clear_text", False):
-    st.session_state.text = ""
-
-awaiting = (
-    st.session_state.result is not None
-    and st.session_state.result.status == Status.NEEDS_INFO
-)
-
-badge = (
-    f'<span class="badge">Pedido #{st.session_state.request_id}</span>'
-    if st.session_state.request_id is not None
-    else ""
-)
-st.markdown(
-    '<div class="topbar"><div class="topbar-icon">📋</div>'
-    '<div class="topbar-title">Triagem de requisições de compra</div>'
-    f"{badge}</div>",
-    unsafe_allow_html=True,
-)
-
-left, right = st.columns([2, 3], gap="large")
-
-with left:
-    with st.container(border=True):
-        title = (
-            f"Responder ao pedido #{st.session_state.request_id}"
-            if awaiting
-            else "Novo pedido"
-        )
-        st.markdown(f'<div class="card-title">{title}</div>', unsafe_allow_html=True)
-        st.text_area(
-            "Responde à pergunta" if awaiting else "Descreve o pedido de compra",
-            key="text",
-            height=160,
-        )
-        col_submit, col_reset = st.columns(2)
-        submit = col_submit.button(
-            "Enviar resposta" if awaiting else "Processar pedido",
-            type="primary",
-            use_container_width=True,
-        )
-        col_reset.button("Novo pedido", on_click=reset, use_container_width=True)
-        st.markdown('<div class="muted">EXEMPLOS</div>', unsafe_allow_html=True)
-        for label, example in EXAMPLES:
-            st.button(
-                label,
-                key=f"example-{label}",
-                on_click=set_example,
-                args=(example,),
-                use_container_width=True,
-            )
-
-with right:
-    steps_box = st.container(border=True)
-    result_box = st.container()
-
-with steps_box:
-    st.markdown('<div class="card-title">Processamento</div>', unsafe_allow_html=True)
-    steps_slot = st.empty()
-    states = st.session_state.steps or initial_states()
-    steps_slot.markdown(render_stepper(states), unsafe_allow_html=True)
-
-if submit and st.session_state.text.strip():
-    states = initial_states()
-    steps_slot.markdown(render_stepper(states), unsafe_allow_html=True)
-    outcome = None
-    for event in iter_process_message(
-        st.session_state.text, get_client(), st.session_state.request_id
-    ):
-        if isinstance(event, StepEvent):
-            states[event.step] = (event.state, event.detail)
-            steps_slot.markdown(render_stepper(states), unsafe_allow_html=True)
-        elif isinstance(event, Outcome):
-            outcome = event
-    st.session_state.request_id = outcome.request_id
-    st.session_state.result = outcome.result
-    st.session_state.steps = states
-    if outcome.result.status == Status.NEEDS_INFO:
-        st.session_state.clear_text = True
-    st.rerun()
-
-if st.session_state.result is not None:
-    with result_box:
-        render_result(st.session_state.result)
-        render_usage(st.session_state.result)
+main()

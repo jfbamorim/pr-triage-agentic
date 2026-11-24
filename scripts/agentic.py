@@ -1,15 +1,14 @@
 import argparse
 import os
-from datetime import timedelta
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
 from openai import OpenAI
 
-from pr_triage.authz import Action, HumanApproval
 from pr_triage.erp import ErpStore, create_demo_erp
 from pr_triage.supervisor.live import live_orchestrator
 from pr_triage.memory import InvalidMemory, MemoryStore
+from pr_triage.supervisor.actions import record_human_decision, record_quote
 from pr_triage.supervisor.state import RunState
 from pr_triage.toolserver.client import McpToolPort
 from pr_triage.supervisor.store import RunStore
@@ -114,24 +113,12 @@ def main() -> None:
         state = orchestrator.resume(args.run_id)
     elif args.command == "quote":
         state = store.load(args.run_id)
-        erp.add_quote(f"quote:{args.run_id}:{args.supplier_id}:{args.amount}", "requester",
-                      state.pr_id, args.supplier_id, args.amount)
+        record_quote(erp, state, args.supplier_id, args.amount)
         print(f"Cotação de {args.supplier_id} ({args.amount:g} €) registada no pedido {state.pr_id}. Corre `resume`.")
         return
     elif args.command == "approve":
         state = store.load(args.run_id)
-        now = erp.clock()
-        erp.record_human_approval(
-            f"human:{args.run_id}",
-            HumanApproval(
-                request_id=state.pr_id,
-                approver=APPROVER,
-                decision=Action.REJECT_PR if args.reject else Action.APPROVE_PR,
-                approved_value_eur=state.request.estimated_value_eur,
-                granted_at=now,
-                expires_at=now + timedelta(hours=24),
-            ),
-        )
+        record_human_decision(erp, state, APPROVER, not args.reject)
         print("Decisão humana registada no ERP. Corre `resume` para continuar.")
         return
     else:

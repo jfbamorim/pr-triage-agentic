@@ -48,7 +48,11 @@ class Orchestrator:
         specialists: Specialists,
         port: ToolPort | None = None,
         memory: MemoryStore | None = None,
+        observer: Callable[[RunState], None] | None = None,
+        on_step: Callable[[RunState, Choice], None] | None = None,
     ):
+        self.observer = observer
+        self.on_step = on_step
         self.port = port
         self.memory = memory
         self.erp = erp
@@ -130,6 +134,8 @@ class Orchestrator:
     def _save(self, state: RunState) -> None:
         state.updated_at = self.erp.clock()
         self.store.save(state)
+        if self.observer is not None:
+            self.observer(state)
 
     def _loop(self, state: RunState) -> RunState:
         self._save(state)
@@ -148,6 +154,8 @@ class Orchestrator:
             choice = Choice(move=moves[0], reason="forced") if forced else self.specialists.decide(state, moves)
             if choice.move not in moves and choice.move != Move.ESCALATE:
                 choice = Choice(move=Move.ESCALATE, reason=f"the supervisor chose {choice.move.value}, which is not allowed")
+            if self.on_step is not None:
+                self.on_step(state, choice)
             outcome = self._execute(state, choice, approval)
             state.steps.append(
                 StepRecord(

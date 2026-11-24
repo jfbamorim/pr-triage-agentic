@@ -241,6 +241,12 @@ class ErpStore:
             row = conn.execute("SELECT * FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
         return Supplier(**{**dict(row), "approved": bool(row["approved"])}) if row else None
 
+    def list_suppliers(self) -> list[Supplier]:
+        self._enter("list_suppliers")
+        with closing(self.connect()) as conn:
+            rows = conn.execute("SELECT * FROM suppliers ORDER BY id").fetchall()
+        return [Supplier(**{**dict(r), "approved": bool(r["approved"])}) for r in rows]
+
     def find_framework_contracts(self, category: Category) -> list[FrameworkContract]:
         self._enter("find_framework_contracts")
         today = self.clock().date().isoformat()

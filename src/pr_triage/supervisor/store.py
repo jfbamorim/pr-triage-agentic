@@ -42,3 +42,10 @@ class RunStore:
                 "SELECT run_id FROM runs WHERE status = ? ORDER BY updated_at", (status.value,)
             ).fetchall()
         return [row[0] for row in rows]
+
+    def list_recent(self, limit: int = 10) -> list[RunState]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT state_json FROM runs ORDER BY updated_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [RunState.model_validate_json(row[0]) for row in rows]
