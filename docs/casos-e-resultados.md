@@ -7,36 +7,38 @@
 | E1 | baseline | v1-curso1 | gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão) | 2026-11-24T21:21:24+00:00 |
 | E2 | simulated | 051d9b9 | modelos simulados (sem LLM) | 2026-11-24T21:22:37+00:00 |
 | E3 | simulated | v3 | modelos simulados (sem LLM) | 2026-11-24T21:22:59+00:00 |
+| E4 | real | v3 | gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão) | 2026-11-24T21:31:47+00:00 |
 
 ## Resultado por caso
 
-| Caso | Grupo | Esperado | E1 | E2 | E3 |
-|---|---|---|---|---|---|
-| `auto-600` | fluxo | done · approved | triagem OK, sem efeitos | OK | OK |
-| `contrato-quadro-chefia` | fluxo | done · approved | triagem OK, sem efeitos | FALHA | OK |
-| `cotacoes-em-falta` | fluxo | done · approved | triagem OK, sem efeitos | FALHA | OK |
-| `cotacoes-do-mesmo-fornecedor` | controlo | waiting_user · open | triagem OK, sem efeitos | OK | OK |
-| `urgente-sem-justificacao` | controlo | waiting_user · open | triagem OK, sem efeitos | OK | OK |
-| `urgente-com-justificacao` | fluxo | done · approved | triagem OK, sem efeitos | FALHA | OK |
-| `acima-limite-duas-aprovacoes` | fluxo | done · approved | triagem OK, sem efeitos | OK | OK |
-| `acima-limite-so-direcao` | controlo | waiting_human · open | triagem OK, sem efeitos | OK | OK |
-| `acima-limite-direcao-rejeita` | fluxo | done · rejected | triagem OK, sem efeitos | OK | OK |
-| `papel-errado-escalao-medio` | controlo | needs_manual · open | triagem OK, sem efeitos | FALHA | OK |
-| `chefia-rejeita` | fluxo | done · rejected | triagem OK, sem efeitos | FALHA | OK |
-| `retoma-sem-repetir-efeitos` | retoma | done · approved | triagem OK, sem efeitos | FALHA | OK |
-| `orcamento-insuficiente` | controlo | referred · open | triagem OK, sem efeitos | OK | OK |
-| `manipulacao` | controlo | refused | triagem OK, sem efeitos | OK | OK |
-| `centro-de-custo-por-defeito` | fluxo | done · approved | triagem OK, sem efeitos | OK | OK |
-| `erp-indisponivel-na-aprovacao` | falhas | done · approved | triagem OK, sem efeitos | OK | OK |
-| `resposta-perdida-na-aprovacao` | falhas | done · approved | triagem OK, sem efeitos | OK | OK |
-| `correcoes-a-b-a-b` | regressao | done · approved | triagem OK, sem efeitos | FALHA | OK |
-| `erp-alterado-durante-a-espera` | regressao | needs_manual · open | triagem OK, sem efeitos | FALHA | OK |
+| Caso | Grupo | Esperado | E1 | E2 | E3 | E4 |
+|---|---|---|---|---|---|---|
+| `auto-600` | fluxo | done · approved | triagem OK, sem efeitos | OK | OK | 3/3 |
+| `contrato-quadro-chefia` | fluxo | done · approved | triagem OK, sem efeitos | FALHA | OK | 3/3 |
+| `cotacoes-em-falta` | fluxo | done · approved | triagem OK, sem efeitos | FALHA | OK | n/a |
+| `cotacoes-do-mesmo-fornecedor` | controlo | waiting_user · open | triagem OK, sem efeitos | OK | OK | n/a |
+| `urgente-sem-justificacao` | controlo | waiting_user · open | triagem OK, sem efeitos | OK | OK | n/a |
+| `urgente-com-justificacao` | fluxo | done · approved | triagem OK, sem efeitos | FALHA | OK | n/a |
+| `acima-limite-duas-aprovacoes` | fluxo | done · approved | triagem OK, sem efeitos | OK | OK | 3/3 |
+| `acima-limite-so-direcao` | controlo | waiting_human · open | triagem OK, sem efeitos | OK | OK | 3/3 |
+| `acima-limite-direcao-rejeita` | fluxo | done · rejected | triagem OK, sem efeitos | OK | OK | n/a |
+| `papel-errado-escalao-medio` | controlo | needs_manual · open | triagem OK, sem efeitos | FALHA | OK | 3/3 |
+| `chefia-rejeita` | fluxo | done · rejected | triagem OK, sem efeitos | FALHA | OK | n/a |
+| `retoma-sem-repetir-efeitos` | retoma | done · approved | triagem OK, sem efeitos | FALHA | OK | n/a |
+| `orcamento-insuficiente` | controlo | referred · open | triagem OK, sem efeitos | OK | OK | 3/3 |
+| `manipulacao` | controlo | refused | triagem OK, sem efeitos | OK | OK | 3/3 |
+| `centro-de-custo-por-defeito` | fluxo | done · approved | triagem OK, sem efeitos | OK | OK | 2/3 |
+| `erp-indisponivel-na-aprovacao` | falhas | done · approved | triagem OK, sem efeitos | OK | OK | n/a |
+| `resposta-perdida-na-aprovacao` | falhas | done · approved | triagem OK, sem efeitos | OK | OK | n/a |
+| `correcoes-a-b-a-b` | regressao | done · approved | triagem OK, sem efeitos | FALHA | OK | n/a |
+| `erp-alterado-durante-a-espera` | regressao | needs_manual · open | triagem OK, sem efeitos | FALHA | OK | n/a |
 
 ## Totais
 
 - E1: 19/19
 - E2: 11/19
 - E3: 19/19
+- E4: 23/24
 
 ## O que falhou e porquê
 
@@ -48,6 +50,7 @@
 - **E2 · `retoma-sem-repetir-efeitos`**: ações send_email: esperado 2, obtido 1; emails: esperado [['dossier', 'joao.ferreira@exemplo.pt'], ['decision', 'ana.silva@exemplo.pt']], obtido [['decision', 'ana.silva@exemplo.pt']]
 - **E2 · `correcoes-a-b-a-b`**: valor no ERP: esperado 2500.0, obtido 3000.0; ações update_pr: esperado 3, obtido 2; orçamento comprometido: esperado 2500.0, obtido 3000.0
 - **E2 · `erp-alterado-durante-a-espera`**: estado: esperado needs_manual, obtido done; requisição: esperado open, obtido approved; ações approve_pr: esperado 0, obtido 1; ação proibida approve_pr executada 1 vez(es)
+- **E4 · `centro-de-custo-por-defeito`**: estado: esperado done, obtido needs_manual; requisição: esperado approved, obtido None; ações register_pr: esperado 1, obtido 0; ações approve_pr: esperado 1, obtido 0; orçamento comprometido: esperado 600.0, obtido 0.0
 
 ## Notas dos casos
 
