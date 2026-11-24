@@ -34,6 +34,7 @@ class Move(str, Enum):
     VERIFY = "verify"
     SEND_DECISION_EMAIL = "send_decision_email"
     ESCALATE = "escalate"
+    RECONCILE = "reconcile"
 
 
 class StepRecord(BaseModel):

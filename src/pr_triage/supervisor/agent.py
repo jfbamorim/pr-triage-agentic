@@ -49,6 +49,7 @@ MOVE_HELP = {
     Move.VERIFY: "verifica o efeito no ERP",
     Move.SEND_DECISION_EMAIL: "envia o email de decisão ao requerente",
     Move.ESCALATE: "passa o pedido a tratamento manual",
+    Move.RECONCILE: "reconcilia o estado com o ERP (nunca é uma escolha tua)",
 }
 
 

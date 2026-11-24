@@ -15,6 +15,7 @@ from pr_triage.domain.schemas import Evidence, PurchaseRequest
 from pr_triage.erp import ErpStore, ErpUnavailable
 from pr_triage.supervisor.agent import Choice
 from pr_triage.supervisor.moves import allowed_moves, pause_reason, quotes_short
+from pr_triage.supervisor.reconcile import reconcile
 from pr_triage.supervisor.state import (
     Blocked,
     Move,
@@ -70,13 +71,40 @@ class Orchestrator:
 
     def resume(self, run_id: str) -> RunState:
         state = self._load(run_id)
-        if state.status in (RunStatus.WAITING_USER, RunStatus.WAITING_HUMAN, RunStatus.RUNNING):
-            if state.status == RunStatus.WAITING_USER:
-                state.investigation = None
-                state.question = None
-            state.status = RunStatus.RUNNING
-            return self._loop(state)
-        return state
+        if state.status not in (RunStatus.WAITING_USER, RunStatus.WAITING_HUMAN, RunStatus.RUNNING):
+            return state
+        if not self._reconcile(state):
+            return state
+        if state.status == RunStatus.WAITING_USER:
+            state.investigation = None
+            state.question = None
+        state.status = RunStatus.RUNNING
+        return self._loop(state)
+
+    def _reconcile(self, state: RunState) -> bool:
+        try:
+            found = reconcile(self.erp, state)
+        except ErpUnavailable as error:
+            state.outcome_message = f"The ERP is unavailable ({error}); nothing was changed. Resume again later."
+            self._save(state)
+            return False
+        if found.changes or found.contradictions:
+            outcome = "; ".join(found.changes + [f"contradiction: {c}" for c in found.contradictions])
+            state.steps.append(
+                StepRecord(
+                    n=len(state.steps) + 1,
+                    move=Move.RECONCILE,
+                    forced=True,
+                    reason="resume",
+                    outcome=outcome,
+                    at=self.erp.clock(),
+                )
+            )
+        if found.contradictions:
+            self._escalate(state, "The run state and the ERP disagree: " + "; ".join(found.contradictions))
+            return False
+        self._save(state)
+        return True
 
     def _load(self, run_id: str) -> RunState:
         state = self.store.load(run_id)

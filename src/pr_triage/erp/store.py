@@ -327,6 +327,22 @@ class ErpStore:
             for r in rows
         ]
 
+    def find_action(self, key: str) -> ActionRecord | None:
+        self._enter("find_action")
+        with closing(self.connect()) as conn:
+            r = conn.execute("SELECT * FROM actions WHERE idempotency_key = ?", (key,)).fetchone()
+        if r is None:
+            return None
+        return ActionRecord(
+            id=r["id"],
+            idempotency_key=r["idempotency_key"],
+            action=r["action"],
+            pr_id=r["pr_id"],
+            actor=r["actor"],
+            result=json.loads(r["result_json"]),
+            created_at=datetime.fromisoformat(r["created_at"]),
+        )
+
     def get_actions(self, pr_id: int | None = None) -> list[ActionRecord]:
         self._enter("get_actions")
         with closing(self.connect()) as conn:
