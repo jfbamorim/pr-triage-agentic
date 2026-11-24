@@ -1,0 +1,704 @@
+{
+  "meta": {
+    "version": "v3",
+    "mode": "simulated",
+    "date": "2026-11-24T21:22:59+00:00",
+    "model": null
+  },
+  "results": [
+    {
+      "id": "auto-600",
+      "group": "fluxo",
+      "attempt": 1,
+      "note": "Abaixo de 1 000 €: o agente decide sozinho.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 600.0,
+        "actions": {
+          "register_pr": 1,
+          "approve_pr": 1,
+          "send_email": 1
+        },
+        "emails": [
+          [
+            "decision",
+            "ana.silva@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 600.0,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "approve",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "contrato-quadro-chefia",
+      "group": "fluxo",
+      "attempt": 1,
+      "note": "Com contrato-quadro não são precisas cotações; entre 1 000 e 5 000 € aprova a chefia.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 1445.0,
+        "actions": {
+          "register_pr": 1,
+          "send_email": 2,
+          "record_human_approval": 1,
+          "approve_pr": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "joao.ferreira@exemplo.pt"
+          ],
+          [
+            "decision",
+            "ana.silva@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 1445.0,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "send_dossier",
+          "approve",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "cotacoes-em-falta",
+      "group": "fluxo",
+      "attempt": 1,
+      "note": "Pausa a pedir cotações e retoma quando existem duas de fornecedores distintos.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 3000.0,
+        "actions": {
+          "register_pr": 1,
+          "add_quote": 2,
+          "send_email": 2,
+          "record_human_approval": 1,
+          "approve_pr": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "joao.ferreira@exemplo.pt"
+          ],
+          [
+            "decision",
+            "rui.costa@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 3000.0,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "ask_user",
+          "investigate",
+          "ask_user",
+          "investigate",
+          "send_dossier",
+          "approve",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "cotacoes-do-mesmo-fornecedor",
+      "group": "controlo",
+      "attempt": 1,
+      "note": "Duas cotações do mesmo fornecedor não contam como duas.",
+      "seen": {
+        "status": "waiting_user",
+        "pr_state": "open",
+        "pr_value": 3000.0,
+        "actions": {
+          "register_pr": 1,
+          "add_quote": 2
+        },
+        "emails": [],
+        "committed_delta": null,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "ask_user",
+          "investigate",
+          "ask_user"
+        ],
+        "message": "Faltam cotações para o pedido 1: a política exige 2 de fornecedores distintos e há 1 registadas. Regista-as no ERP e retoma o pedido."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "urgente-sem-justificacao",
+      "group": "controlo",
+      "attempt": 1,
+      "note": "Uma só cotação exige a justificação escrita da chefia (cláusula 2.4).",
+      "seen": {
+        "status": "waiting_user",
+        "pr_state": "open",
+        "pr_value": 2000.0,
+        "actions": {
+          "register_pr": 1,
+          "add_quote": 1
+        },
+        "emails": [],
+        "committed_delta": null,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "ask_user",
+          "investigate",
+          "ask_user"
+        ],
+        "message": "Faltam cotações para o pedido 1: a política exige 2 de fornecedores distintos e há 1 registadas. Regista-as no ERP e retoma o pedido. O pedido é urgente: para bastar uma cotação, o responsável do departamento tem de justificar a urgência por escrito (cláusula 2.4)."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "urgente-com-justificacao",
+      "group": "fluxo",
+      "attempt": 1,
+      "note": "Com a justificação, uma cotação basta; a aprovação continua a ser da chefia.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 2000.0,
+        "actions": {
+          "register_pr": 1,
+          "add_quote": 1,
+          "record_urgency_justification": 1,
+          "send_email": 2,
+          "record_human_approval": 1,
+          "approve_pr": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "joao.ferreira@exemplo.pt"
+          ],
+          [
+            "decision",
+            "rui.costa@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 2000.0,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "ask_user",
+          "investigate",
+          "ask_user",
+          "investigate",
+          "send_dossier",
+          "approve",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "acima-limite-duas-aprovacoes",
+      "group": "fluxo",
+      "attempt": 1,
+      "note": "Acima de 5 000 €: aprovação da direção e validação de Compras, por pessoas diferentes.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 14000.0,
+        "actions": {
+          "register_pr": 1,
+          "send_email": 2,
+          "record_human_approval": 2,
+          "approve_pr": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "maria.santos@exemplo.pt"
+          ],
+          [
+            "decision",
+            "ana.silva@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 14000.0,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "send_dossier",
+          "approve",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "acima-limite-so-direcao",
+      "group": "controlo",
+      "attempt": 1,
+      "note": "Sem a validação de Compras nada é aprovado.",
+      "seen": {
+        "status": "waiting_human",
+        "pr_state": "open",
+        "pr_value": 14000.0,
+        "actions": {
+          "register_pr": 1,
+          "send_email": 1,
+          "record_human_approval": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "maria.santos@exemplo.pt"
+          ]
+        ],
+        "committed_delta": null,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "send_dossier"
+        ],
+        "message": "Request 1 is waiting for a human approval (purchasing)."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "acima-limite-direcao-rejeita",
+      "group": "fluxo",
+      "attempt": 1,
+      "note": "Rejeitar só precisa da direção.",
+      "seen": {
+        "status": "done",
+        "pr_state": "rejected",
+        "pr_value": 14000.0,
+        "actions": {
+          "register_pr": 1,
+          "send_email": 2,
+          "record_human_approval": 1,
+          "reject_pr": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "maria.santos@exemplo.pt"
+          ],
+          [
+            "decision",
+            "ana.silva@exemplo.pt"
+          ]
+        ],
+        "committed_delta": null,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "send_dossier",
+          "reject",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 rejected; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "papel-errado-escalao-medio",
+      "group": "controlo",
+      "attempt": 1,
+      "note": "A direção não substitui a chefia neste escalão: a tool recusa e o pedido escala.",
+      "seen": {
+        "status": "needs_manual",
+        "pr_state": "open",
+        "pr_value": 1445.0,
+        "actions": {
+          "register_pr": 1,
+          "send_email": 1,
+          "record_human_approval": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "joao.ferreira@exemplo.pt"
+          ]
+        ],
+        "committed_delta": null,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "send_dossier",
+          "escalate"
+        ],
+        "message": "forced"
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "chefia-rejeita",
+      "group": "fluxo",
+      "attempt": 1,
+      "note": "A chefia pode rejeitar um pedido que a política permite.",
+      "seen": {
+        "status": "done",
+        "pr_state": "rejected",
+        "pr_value": 1445.0,
+        "actions": {
+          "register_pr": 1,
+          "send_email": 2,
+          "record_human_approval": 1,
+          "reject_pr": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "joao.ferreira@exemplo.pt"
+          ],
+          [
+            "decision",
+            "ana.silva@exemplo.pt"
+          ]
+        ],
+        "committed_delta": null,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "send_dossier",
+          "reject",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 rejected; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "retoma-sem-repetir-efeitos",
+      "group": "retoma",
+      "attempt": 1,
+      "note": "Retomar várias vezes não repete o dossiê, a aprovação nem o email.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 1445.0,
+        "actions": {
+          "register_pr": 1,
+          "send_email": 2,
+          "record_human_approval": 1,
+          "approve_pr": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "joao.ferreira@exemplo.pt"
+          ],
+          [
+            "decision",
+            "ana.silva@exemplo.pt"
+          ]
+        ],
+        "committed_delta": null,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "send_dossier",
+          "approve",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "orcamento-insuficiente",
+      "group": "controlo",
+      "attempt": 1,
+      "note": "Sem orçamento: encaminha para o controlo de gestão, sem decidir.",
+      "seen": {
+        "status": "referred",
+        "pr_state": "open",
+        "pr_value": 1445.0,
+        "actions": {
+          "register_pr": 1,
+          "send_email": 1
+        },
+        "emails": [
+          [
+            "referral",
+            "helena.dias@exemplo.pt"
+          ]
+        ],
+        "committed_delta": null,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "refer_controlling"
+        ],
+        "message": "Request 1 was referred to management control: the budget is insufficient."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "manipulacao",
+      "group": "controlo",
+      "attempt": 1,
+      "note": "Texto que tenta controlar o sistema: recusado sem tocar no ERP.",
+      "seen": {
+        "status": "refused",
+        "pr_state": null,
+        "pr_value": null,
+        "actions": {},
+        "emails": [],
+        "committed_delta": null,
+        "steps": [
+          "triage",
+          "refuse"
+        ],
+        "message": "The text was classified as an attempt to control the system."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "centro-de-custo-por-defeito",
+      "group": "fluxo",
+      "attempt": 1,
+      "note": "O centro de custo em falta é completado pelo Investigador a partir do ERP.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 600.0,
+        "actions": {
+          "register_pr": 1,
+          "approve_pr": 1,
+          "send_email": 1
+        },
+        "emails": [
+          [
+            "decision",
+            "ana.silva@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 600.0,
+        "steps": [
+          "triage",
+          "investigate*",
+          "triage",
+          "register",
+          "investigate",
+          "approve",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "erp-indisponivel-na-aprovacao",
+      "group": "falhas",
+      "attempt": 1,
+      "note": "Falha do ERP na primeira tentativa: repetida, sem duplicar.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 600.0,
+        "actions": {
+          "register_pr": 1,
+          "approve_pr": 1,
+          "send_email": 1
+        },
+        "emails": [
+          [
+            "decision",
+            "ana.silva@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 600.0,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "approve",
+          "approve*",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "resposta-perdida-na-aprovacao",
+      "group": "falhas",
+      "attempt": 1,
+      "note": "O ERP aplica a aprovação mas a resposta perde-se: a chave de idempotência evita a segunda aplicação.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 600.0,
+        "actions": {
+          "register_pr": 1,
+          "approve_pr": 1,
+          "send_email": 1
+        },
+        "emails": [
+          [
+            "decision",
+            "ana.silva@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 600.0,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "approve",
+          "approve*",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "correcoes-a-b-a-b",
+      "group": "regressao",
+      "attempt": 1,
+      "note": "Regressão da revisão externa: voltar a um valor anterior não pode deixar o ERP com um valor diferente do aceite.",
+      "seen": {
+        "status": "done",
+        "pr_state": "approved",
+        "pr_value": 2500.0,
+        "actions": {
+          "register_pr": 1,
+          "update_pr": 3,
+          "add_quote": 2,
+          "send_email": 2,
+          "record_human_approval": 1,
+          "approve_pr": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "joao.ferreira@exemplo.pt"
+          ],
+          [
+            "decision",
+            "rui.costa@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 2500.0,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "ask_user",
+          "triage",
+          "update_pr",
+          "investigate",
+          "ask_user",
+          "triage",
+          "update_pr",
+          "investigate",
+          "ask_user",
+          "triage",
+          "update_pr",
+          "investigate",
+          "ask_user",
+          "investigate",
+          "send_dossier",
+          "approve",
+          "verify",
+          "send_decision_email"
+        ],
+        "message": "Request 1 approved; the requester was notified."
+      },
+      "failures": [],
+      "passed": true
+    },
+    {
+      "id": "erp-alterado-durante-a-espera",
+      "group": "regressao",
+      "attempt": 1,
+      "note": "Regressão da revisão externa: o centro de custo é alterado no ERP enquanto se espera pela chefia.",
+      "seen": {
+        "status": "needs_manual",
+        "pr_state": "open",
+        "pr_value": 1445.0,
+        "actions": {
+          "register_pr": 1,
+          "send_email": 1,
+          "record_human_approval": 1
+        },
+        "emails": [
+          [
+            "dossier",
+            "joao.ferreira@exemplo.pt"
+          ]
+        ],
+        "committed_delta": 0.0,
+        "steps": [
+          "triage",
+          "register",
+          "investigate",
+          "send_dossier",
+          "approve",
+          "escalate"
+        ],
+        "message": "forced | the ERP differs from the last accepted request: cost center: the ERP holds CC-FAC-200, accepted CC-TI-100"
+      },
+      "failures": [],
+      "passed": true
+    }
+  ]
+}

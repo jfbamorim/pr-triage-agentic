@@ -66,6 +66,15 @@ O Supervisor não executa nada: o orquestrador corre os especialistas e as tools
 ### Tools e MCP
 16 tools com contrato (entrada em Pydantic, saída num envelope `{ok, data, error{code, retryable}}`): 11 de leitura (`get_person`, `get_cost_center`, `get_budget`, `get_supplier`, `find_framework_contracts`, `search_catalog`, `get_pr`, `get_quotes`, `get_approval_status`, `get_urgency_justification`, `search_policy`) e 5 de escrita (`register_pr`, `update_pr`, `approve_pr`, `reject_pr`, `send_email`). Um servidor MCP (fastmcp, stdio) expõe-nas, e **todas as chamadas das corridas passam por ele**. As escritas levam um `run_id` e são idempotentes. A autorização está dentro das tools, por isso é aplicada seja quem for o cliente.
 
+**Seleção das capacidades expostas.** O servidor arranca com um perfil que decide que tools existem para o cliente (`--profile`):
+
+| Perfil | Tools expostas | Para quê |
+|---|---|---|
+| `agent` (por omissão) | As 16 | O orquestrador, que tem de registar, decidir e enviar |
+| `readonly` | As 11 de leitura | Qualquer outro cliente MCP que só precise de consultar o ERP e a política |
+
+No perfil `readonly` as ferramentas que movem dinheiro ou enviam emails nem aparecem na lista nem podem ser chamadas, o que aplica o princípio do projeto também na fronteira do MCP: quem só consulta não tem como escrever, mesmo que peça. A autorização dentro das tools continua a valer nos dois perfis, por isso escolher `agent` não dá poderes a ninguém: uma aprovação sem os papéis certos continua a ser recusada. Exemplo: `uv run python -m pr_triage.toolserver --erp state/erp.db --profile readonly`.
+
 ## Políticas e permissões
 
 | Valor | Quem decide |
@@ -127,7 +136,30 @@ O baseline só consegue dizer "pronto", "faltam dados", "rejeitado" ou "ação m
 - `2026-11-24-factos-antes-das-correcoes.txt` e `2026-11-24-factos-depois-das-correcoes.txt`: dois defeitos reais (a verificação a escalar um pedido já aprovado, e uma pergunta a ser escalada em vez de feita) e a sua correção.
 - `2026-11-24-memoria.txt` e `2026-11-24-memoria-pergunta.txt`: ciclo completo da memória, com sugestão, confirmação e aprovação.
 
-> A completar: avaliação comparativa nos mesmos casos (baseline contra versões).
+### Como se corre
+
+Os 19 casos estão em `data/eval/e2e_cases.jsonl`. Cada um tem o pedido, o guião das intervenções humanas (cotações, justificação, aprovações, uma alteração direta no ERP), as falhas a injetar e o resultado esperado: estado da corrida, estado e valor da requisição no ERP, ações registadas (contadas), ações proibidas, emails com destinatário e orçamento comprometido. Todos partem do mesmo ERP de demonstração, recriado a cada caso.
+
+```bash
+uv run python eval/run_cases.py --label v3                       # simulado: sem LLM, determinístico
+uv run python eval/run_cases.py --mode real --repeat 3 --label v3 # modelo real, para ver a variação
+uv run python eval/run_cases.py --mode baseline --label v1-curso1 # só a triagem do Curso 1
+uv run python eval/report.py eval/results/e2e-*.json > docs/casos-e-resultados.md
+```
+
+O modo simulado usa especialistas simulados (`eval/e2e_fakes.py`) e mede o que é código: controlo, efeitos, retoma e falhas. O modo real usa o modelo e mede a interpretação, que varia entre corridas. O modo `baseline` corre só o workflow do Curso 1, que não tem ERP, por isso não tem efeitos para comparar; mostra apenas se a triagem acerta.
+
+Para comparar versões, o mesmo ficheiro de casos e o mesmo runner correm noutra versão do código num `worktree`:
+
+```bash
+git worktree add ../prt-051d9b9 051d9b9
+cp eval/run_cases.py eval/e2e_fakes.py ../prt-051d9b9/eval/ && cp data/eval/e2e_cases.jsonl ../prt-051d9b9/data/eval/
+(cd ../prt-051d9b9 && uv sync && uv run python eval/run_cases.py --label 051d9b9) && cp ../prt-051d9b9/eval/results/e2e-simulated-051d9b9.json eval/results/
+```
+
+Antes de aceitar a avaliação, confirmei que o conjunto consegue falhar: numa cópia com as duas correções das revisões revertidas, os casos `correcoes-a-b-a-b` e `erp-alterado-durante-a-espera` falham com os sintomas exatos que as revisões descreveram (ERP com 3 000 € em vez de 2 500 € e aprovação com o centro de custo trocado).
+
+Os resultados e a comparação estão em `docs/casos-e-resultados.md`.
 
 ## Limitações
 
