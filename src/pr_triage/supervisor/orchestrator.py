@@ -14,6 +14,7 @@ from pr_triage.agents.triage import TriageOutcome, TriageReport, check_report
 from pr_triage.domain.schemas import Evidence, PurchaseRequest
 from pr_triage.erp import ErpStore, ErpUnavailable
 from pr_triage.supervisor.agent import Choice
+from pr_triage.memory import MemoryStore, MemoryView
 from pr_triage.supervisor.moves import allowed_moves, pause_reason, quotes_short
 from pr_triage.supervisor.reconcile import reconcile
 from pr_triage.supervisor.state import (
@@ -46,8 +47,10 @@ class Orchestrator:
         store: RunStore,
         specialists: Specialists,
         port: ToolPort | None = None,
+        memory: MemoryStore | None = None,
     ):
         self.port = port
+        self.memory = memory
         self.erp = erp
         self.policy = policy
         self.store = store
@@ -121,7 +124,8 @@ class Orchestrator:
         return state
 
     def _ctx(self, state: RunState) -> ToolContext:
-        return ToolContext(erp=self.erp, policy=self.policy, run_id=state.run_id, port=self.port)
+        view = MemoryView(self.memory, state.requester_email) if self.memory is not None else None
+        return ToolContext(erp=self.erp, policy=self.policy, run_id=state.run_id, port=self.port, memory=view)
 
     def _save(self, state: RunState) -> None:
         state.updated_at = self.erp.clock()
@@ -162,11 +166,23 @@ class Orchestrator:
         if state.decision_email_sent:
             state.status = RunStatus.DONE
             state.outcome_message = f"Request {state.pr_id} {state.decision}; the requester was notified."
+            self._remember(state)
         elif pause_reason(state, approval) == RunStatus.WAITING_HUMAN:
             state.status = RunStatus.WAITING_HUMAN
             state.outcome_message = f"Request {state.pr_id} is waiting for a human approval."
         else:
             self._escalate(state, "No allowed move and nothing to wait for.")
+
+    def _remember(self, state: RunState) -> None:
+        if self.memory is None or state.decision != "approved" or not state.decision_verified:
+            return
+        cost_center = state.request.cost_center if state.request else None
+        person = self.erp.get_person(state.requester_email)
+        if cost_center is None or person is None or cost_center == person.default_cost_center:
+            return
+        self.memory.remember(
+            state.requester_email, "cost_center", cost_center, "approved_request", state.run_id, state.pr_id
+        )
 
     def _escalate(self, state: RunState, reason: str) -> None:
         state.status = RunStatus.NEEDS_MANUAL
@@ -230,8 +246,8 @@ class Orchestrator:
 
     def _do_ask_user(self, state: RunState, choice: Choice) -> str:
         triage, inv = state.triage, state.investigation
-        question = triage.follow_up if triage.outcome == TriageOutcome.NEEDS_INFO and triage.follow_up else None
-        if question is None and inv is not None and quotes_short(state):
+        question = None
+        if inv is not None and quotes_short(state):
             question = (
                 f"Faltam cotações para o pedido {state.pr_id}: a política exige {inv.quotes_required} "
                 f"de fornecedores distintos e há {inv.quotes_found or 0} registadas. "
@@ -239,6 +255,8 @@ class Orchestrator:
             )
         if question is None and inv is not None and inv.questions_for_user:
             question = inv.questions_for_user[0]
+        if question is None and triage.outcome == TriageOutcome.NEEDS_INFO:
+            question = triage.follow_up
         state.question = question or "Podes dar mais informação sobre o pedido?"
         state.status = RunStatus.WAITING_USER
         state.outcome_message = state.question

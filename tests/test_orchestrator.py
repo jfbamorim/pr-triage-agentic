@@ -411,3 +411,10 @@ def test_verification_accepts_the_clauses_in_any_order(tmp_path):
     s.investigator.clauses = ["03-fornecedores-e-categorias#3.3", "02-escaloes-e-cotacoes#2.1"]
     state = s.start("monitores")
     assert state.status == RunStatus.DONE and state.decision_verified
+
+
+def test_the_investigation_question_wins_over_the_generic_triage_follow_up(tmp_path):
+    s = Setup(tmp_path)
+    state = s.start("sem centro", "tiago.lopes@exemplo.pt")
+    assert state.status == RunStatus.WAITING_USER
+    assert state.question == "Qual o centro de custo?"

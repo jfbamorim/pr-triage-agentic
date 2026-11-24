@@ -1,0 +1,53 @@
+=== m1 ===
+[11/24/26 16:40:01] INFO     Starting MCP server                transport.py:241
+                             'purchasing-tools' with transport                  
+                             'stdio'                                            
+
+run m1: done
+  Request 14 approved; the requester was notified.
+   1. triage               forçado    ready
+   2. register             forçado    pr_id=14
+   3. investigate          forçado    verdict=permits
+   4. approve              forçado    approved
+   5. verify               forçado    verified
+   6. send_decision_email  forçado    decision email sent
+  investigação: permits | cláusulas 03-fornecedores-e-categorias#3.3, 02-escaloes-e-cotacoes#2.1, 03-fornecedores-e-categorias#3.2
+    cost_center        ok          O centro de custo CC-TI-100 está ativo (Tecnologias de Informação).
+    budget             ok          Orçamento disponível de 105155 €, suficiente para 600 €.
+    catalog            ok          Monitor 27 polegadas: 2 x 289 € = 578 €; pedido de 600 €.
+    framework_contract ok          Contrato-quadro FC-001 (TechNova) em vigor, com 120000 € disponíveis.
+    supplier           ok          Fornecedor TechNova (S01) aprovado.
+    quotes             ok          A política não exige cotações para este pedido.
+    A compra de monitores (equipamento informático) deve ser feita via catálogo de IT, independentemente do valor (3.3). O pedido é de 600€, abaixo de 1 000€, portanto aprovação pelo responsável do centro de custo sem necessidade de cotações (2.1). Existe contrato-quadro para a categoria e a compra é feita ao abrigo dele, dispensando cotações (3.2). Os factos confirmam centro de custo ativo, orçamento suficiente, fornecedor aprovado, e ausência de exigência de cotações.
+  ERP: pedido 14 approved, 600 €, CC-TI-100
+  email [decision] para tiago.lopes@exemplo.pt: Aprovação de Requisição de Compra 14 - Monitores
+    O pedido de compra de 2 monitores, no valor de 600€, para o centro de custo CC-TI-100 foi aprovado pelo sistema automático de aprovação.
+
+A cláusula 3.3 define que equipamento informático, como monitores, deve ser adquirido exclusivamente pelo catálogo de IT.
+A cláusula 2.1 estabelece que requisições abaixo de 1 000 € podem ser aprovadas pelo responsável do centro de custo sem necessidade de cotações.
+A cláusula 3.2 indica que, havendo contrato-quadro para a categoria, a compra deve ser feita ao abrigo dele, dispensando cotações.
+
+O pedido cumpre estas regras, tem orçamento suficiente e fornecedor aprovado, pelo que foi aprovado conforme o automático de aprovação.
+
+=== m2 ===
+[11/24/26 16:40:23] INFO     Starting MCP server                transport.py:241
+                             'purchasing-tools' with transport                  
+                             'stdio'                                            
+
+run m2: waiting_user
+  Olá, podes indicar o centro de custo para o pedido dos 2 monitores com valor estimado de 600 EUR? Obrigado!
+   1. triage               forçado    needs_info
+   2. investigate          supervisor verdict=unclear
+      motivo: Faltando o centro de custo, a ação correta é investigar para tentar completar essa informação a partir do ERP, pois perguntar ao utilizador antes de tentar esta etapa é um erro.
+   3. ask_user             forçado    waiting_user
+  investigação: unclear | cláusulas -
+    cost_center        not_checked Sem centro de custo.
+    budget             not_checked Faltam dados para verificar o orçamento.
+    catalog            ok          Monitor 27 polegadas: 2 x 289 € = 578 €; pedido de 600 €.
+    framework_contract ok          Contrato-quadro FC-001 (TechNova) em vigor, com 120000 € disponíveis.
+    supplier           ok          Fornecedor TechNova (S01) aprovado.
+    quotes             not_checked Pedido ainda não registado ou sem valor.
+    Faltam dados que o ERP não consegue dar; é preciso perguntar ao utilizador.
+
+=== memória ===
+#1 cost_center=CC-TI-100 [active] origem: corrida m1, pedido 14; criada 24/11/2026; válida até 22/02/2027

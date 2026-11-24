@@ -101,6 +101,24 @@ def _money(value: float) -> str:
     return f"{value:g} €"
 
 
+def _cost_center_question(ctx: ToolContext, facts: Facts) -> str:
+    plain = "Qual o centro de custo a usar neste pedido?"
+    entry = ctx.memory.recall("cost_center") if ctx.memory is not None else None
+    if entry is None:
+        return plain
+    found = call_tool(ctx, "get_cost_center", {"code": entry.value})
+    facts.log.append(ToolCallRecord(name="get_cost_center", arguments={"code": entry.value}, result=found))
+    if not found.ok and found.error.retryable:
+        raise FactsUnavailable(found.error, "get_cost_center")
+    if not found.ok or not found.data["active"]:
+        ctx.memory.invalidate(entry, f"cost center {entry.value} is no longer valid in the ERP")
+        return plain
+    return (
+        f"{plain} Da última vez usaste {entry.value} (pedido nº {entry.origin_pr_id}, "
+        f"{entry.created_at:%d/%m/%Y}). Para confirmares, responde: Centro de custo: {entry.value}"
+    )
+
+
 def gather_facts(
     ctx: ToolContext, request: PurchaseRequest, requester_email: str, pr_id: int | None
 ) -> Facts:
@@ -120,7 +138,7 @@ def gather_facts(
                 )
             )
         else:
-            facts.questions.append("Qual o centro de custo a usar neste pedido?")
+            facts.questions.append(_cost_center_question(ctx, facts))
 
     catalog = _read(
         ctx, facts, "search_catalog", {"query": request.item, "category": request.category.value}

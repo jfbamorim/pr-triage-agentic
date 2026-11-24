@@ -3,6 +3,7 @@ from typing import Protocol
 
 from pr_triage.domain.schemas import Evidence
 from pr_triage.erp import ErpStore
+from pr_triage.memory import MemoryView
 from pr_triage.tools.envelope import ToolResult
 
 
@@ -25,3 +26,4 @@ class ToolContext:
     run_id: str
     actor: str = "agent"
     port: ToolPort | None = None
+    memory: MemoryView | None = None

@@ -22,6 +22,7 @@ def live_specialists(client: OpenAI, model=None) -> Specialists:
 
 
 def live_orchestrator(
-    erp: ErpStore, policy: PolicyPort, store: RunStore, client: OpenAI, model=None, port: ToolPort | None = None
+    erp: ErpStore, policy: PolicyPort, store: RunStore, client: OpenAI, model=None, port: ToolPort | None = None,
+    memory=None,
 ) -> Orchestrator:
-    return Orchestrator(erp, policy, store, live_specialists(client, model), port)
+    return Orchestrator(erp, policy, store, live_specialists(client, model), port, memory)
