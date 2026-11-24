@@ -2,12 +2,12 @@
 
 ## Execuções comparadas
 
-| Execução | Modo | Versão | Modelo | Data |
-|---|---|---|---|---|
-| E1 | baseline | v1-curso1 | gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão) | 2026-11-24T21:21:24+00:00 |
-| E2 | simulated | 051d9b9 | modelos simulados (sem LLM) | 2026-11-24T21:22:37+00:00 |
-| E3 | simulated | v3 | modelos simulados (sem LLM) | 2026-11-24T21:22:59+00:00 |
-| E4 | real | v3 | gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão) | 2026-11-24T21:31:47+00:00 |
+| Execução | Modo | Versão | Commit | Modelo | Data |
+|---|---|---|---|---|---|
+| E1 | baseline | v1-curso1 | 8a8097b | gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão) | 2026-11-24T21:48:46+00:00 |
+| E2 | simulated | 051d9b9 | n/d | modelos simulados (sem LLM) | 2026-11-24T21:22:37+00:00 |
+| E3 | simulated | v3 | n/d | modelos simulados (sem LLM) | 2026-11-24T21:22:59+00:00 |
+| E4 | real | v3 | n/d | gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão) | 2026-11-24T21:31:47+00:00 |
 
 ## Resultado por caso
 
@@ -30,15 +30,15 @@
 | `centro-de-custo-por-defeito` | fluxo | done · approved | triagem OK, sem efeitos | OK | OK | 2/3 |
 | `erp-indisponivel-na-aprovacao` | falhas | done · approved | triagem OK, sem efeitos | OK | OK | n/a |
 | `resposta-perdida-na-aprovacao` | falhas | done · approved | triagem OK, sem efeitos | OK | OK | n/a |
-| `correcoes-a-b-a-b` | regressao | done · approved | triagem OK, sem efeitos | FALHA | OK | n/a |
-| `erp-alterado-durante-a-espera` | regressao | needs_manual · open | triagem OK, sem efeitos | FALHA | OK | n/a |
+| `correcoes-a-b-a-b` | regressao | done · approved | n/a | FALHA | OK | n/a |
+| `erp-alterado-durante-a-espera` | regressao | needs_manual · open | n/a | FALHA | OK | n/a |
 
 ## Totais
 
-- E1: 19/19
-- E2: 11/19
-- E3: 19/19
-- E4: 23/24
+- E1: 17/17 verificações de triagem; 2 não aplicáveis
+- E2: 11/19 casos
+- E3: 19/19 casos
+- E4: 23/24 casos
 
 ## O que falhou e porquê
 

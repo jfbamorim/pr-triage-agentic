@@ -2,8 +2,9 @@
   "meta": {
     "version": "v1-curso1",
     "mode": "baseline",
-    "date": "2026-11-24T21:21:24+00:00",
-    "model": "gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão)"
+    "date": "2026-11-24T21:48:46+00:00",
+    "model": "gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão)",
+    "commit": "8a8097b"
   },
   "results": [
     {
@@ -256,7 +257,7 @@
       },
       "failures": [],
       "effects": "n/a (sem ERP nem efeitos)",
-      "passed": true
+      "passed": null
     },
     {
       "id": "erp-alterado-durante-a-espera",
@@ -270,7 +271,7 @@
       },
       "failures": [],
       "effects": "n/a (sem ERP nem efeitos)",
-      "passed": true
+      "passed": null
     }
   ]
 }
