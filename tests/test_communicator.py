@@ -154,7 +154,7 @@ def test_persistent_bad_output_is_a_failure_with_the_reasons(tmp_path):
     bad = GOOD.model_copy(update={"body": "O pedido de 2 Monitores, de 800 €, foi aprovado, sem mais."})
     result = write_email(brief_for(ctx, pr_id), scripted(bad))
     assert result.draft is None and result.failure.code == "invalid_output"
-    assert "must be cited" in result.failure.message and not result.failure.retryable
+    assert "must be cited" in result.failure.message and result.failure.retryable
 
 
 def test_model_outage_is_retryable(tmp_path):

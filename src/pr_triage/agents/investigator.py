@@ -134,6 +134,9 @@ def quotes_floor(deps: InvestigatorDeps) -> int:
 
 
 def _check_quotes(report: InvestigationReport, deps: InvestigatorDeps) -> list[str]:
+    value = deps.request.estimated_value_eur
+    if deps.pr_id is not None and value is not None and value >= 1000 and not _ok_calls(deps, "find_framework_contracts"):
+        return ["a framework contract may dispense the quotes: check it with find_framework_contracts first"]
     floor = quotes_floor(deps)
     if floor == 0:
         return []
@@ -207,7 +210,10 @@ def check_investigation(report: InvestigationReport, deps: InvestigatorDeps) -> 
     problems.extend(_check_quotes(report, deps))
     unknown = [c for c in report.cited_clauses if c not in _seen_clauses(deps)]
     if unknown:
-        problems.append(f"these clauses were never retrieved: {unknown}")
+        problems.append(
+            f"these clauses were never retrieved: {unknown}; "
+            f"cite the chunk_id exactly as returned, one of {sorted(_seen_clauses(deps))}"
+        )
 
     resolved = {item.field for item in report.resolved_fields}
     cost_center_known = bool(deps.request.cost_center) or "cost_center" in resolved
@@ -257,11 +263,11 @@ Faz o seguinte:
    não vai em resolved_fields; só se verifica com get_cost_center.
    Se o pedido já tiver número no ERP, verifica as cotações com get_quotes. A política exige duas
    cotações de fornecedores distintos entre 1 000 € e 5 000 € (cláusula 2.2) e três acima de 5 000 € (cláusula 2.3),
-   salvo se existir contrato-quadro em vigor para a categoria (cláusula 3.2, as cotações deixam de ser exigidas)
+   salvo se existir contrato-quadro (verifica-o sempre com find_framework_contracts antes de pedir cotações) em vigor para a categoria (cláusula 3.2, as cotações deixam de ser exigidas)
    ou, até 5 000 €, em compras urgentes (cláusula 2.4, uma cotação). Preenche quotes_required e quotes_found
    (fornecedores distintos). Se faltarem cotações, a verificação quotes é problem, o veredicto não é permits
    e perguntas ao utilizador pelas cotações em falta.
-4. Pesquisa a política com search_policy e cita só cláusulas que viste. As cláusulas da triagem podem
+4. Pesquisa a política com search_policy e cita só cláusulas que viste, com o chunk_id exatamente como a tool o devolveu (por exemplo "02-escaloes-e-cotacoes#2.1"). As cláusulas da triagem podem
    não cobrir a categoria do pedido (por exemplo serviços ou consultoria): nesse caso pesquisa tu, com
    várias formulações (a categoria, o tipo de compra, o valor, validações exigidas). Atenção às cláusulas
    de atualização: se uma cláusula nova substitui outra e já está em vigor, vale a nova.

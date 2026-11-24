@@ -385,6 +385,18 @@ def test_a_framework_contract_in_force_dispenses_the_quotes(tmp_path):
     assert result.failure is None
 
 
+def test_the_framework_contract_must_be_checked_before_asking_for_quotes(tmp_path):
+    request = make_pr(**SERVICE)
+    result = investigate(
+        tmp_path,
+        [tool_step(("get_quotes", {"pr_id": 1})),
+         final(checks=QUOTES_PROBLEM, quotes_required=2, quotes_found=0, policy_verdict="unclear",
+               questions_for_user=["Faltam 2 cotações."])],
+        request=request, pr_id=1, setup=with_quotes(),
+    )
+    assert "check it with find_framework_contracts first" in result.failure.message
+
+
 def test_before_registration_no_quotes_are_required(tmp_path):
     request = make_pr(**SERVICE)
     result = investigate(tmp_path, [final(policy_verdict="unclear", questions_for_user=["?"])], request=request)

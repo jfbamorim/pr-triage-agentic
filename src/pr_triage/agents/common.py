@@ -29,7 +29,7 @@ def classify(error: Exception) -> tuple[str, bool]:
     if isinstance(error, UsageLimitExceeded):
         return "step_limit", False
     if isinstance(error, UnexpectedModelBehavior):
-        return "invalid_output", False
+        return "invalid_output", True
     if isinstance(error, ModelAPIError):
         return "llm_unavailable", True
     return "unexpected_error", False
