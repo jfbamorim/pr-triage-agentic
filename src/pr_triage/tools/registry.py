@@ -38,6 +38,16 @@ TOOLS = [
 
 BY_NAME = {tool.name: tool for tool in TOOLS}
 
+PROFILES = ("agent", "readonly")
+
+
+def tools_for(profile: str) -> list[Tool]:
+    if profile == "agent":
+        return list(TOOLS)
+    if profile == "readonly":
+        return [tool for tool in TOOLS if not tool.writes]
+    raise ValueError(f"Unknown profile {profile}; choose one of {', '.join(PROFILES)}.")
+
 
 def call_tool(ctx: ToolContext, name: str, arguments: dict) -> ToolResult:
     if ctx.port is not None:

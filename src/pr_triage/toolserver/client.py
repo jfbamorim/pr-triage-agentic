@@ -24,10 +24,10 @@ class McpToolPort:
         self._client: Client | None = None
 
     @classmethod
-    def stdio(cls, erp_path: str, timeout: float = TIMEOUT_SECONDS) -> "McpToolPort":
+    def stdio(cls, erp_path: str, timeout: float = TIMEOUT_SECONDS, profile: str = "agent") -> "McpToolPort":
         transport = StdioTransport(
             command=sys.executable,
-            args=["-m", "pr_triage.toolserver", "--erp", erp_path],
+            args=["-m", "pr_triage.toolserver", "--erp", erp_path, "--profile", profile],
             env=dict(os.environ),
         )
         return cls(transport, timeout)

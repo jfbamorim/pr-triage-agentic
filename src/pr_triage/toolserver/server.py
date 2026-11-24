@@ -5,7 +5,7 @@ from fastmcp.tools import Tool as McpTool
 from fastmcp.tools.base import ToolResult as McpResult
 
 from pr_triage.erp import ErpStore
-from pr_triage.tools import TOOLS, PolicyPort, ToolContext, run_tool
+from pr_triage.tools import PolicyPort, ToolContext, run_tool, tools_for
 from pr_triage.tools.registry import Tool
 
 RUN_ID = {"type": "string", "description": "Identifier of the run; part of the idempotency key."}
@@ -41,9 +41,9 @@ def _result(payload: dict) -> McpResult:
     return McpResult(structured_content=payload)
 
 
-def build_server(erp: ErpStore, policy: PolicyPort) -> FastMCP:
+def build_server(erp: ErpStore, policy: PolicyPort, profile: str = "agent") -> FastMCP:
     server = FastMCP("purchasing-tools")
-    for tool in TOOLS:
+    for tool in tools_for(profile):
         server.add_tool(
             PurchasingTool(
                 name=tool.name,

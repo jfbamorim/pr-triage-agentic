@@ -10,7 +10,7 @@ from pr_triage.supervisor.state import RunStatus
 from pr_triage.supervisor.store import RunStore
 from pr_triage.toolserver.client import McpToolPort
 from pr_triage.toolserver.server import build_server
-from pr_triage.tools import TOOLS, ToolContext, call_tool, run_tool
+from pr_triage.tools import TOOLS, ToolContext, call_tool, run_tool, tools_for
 from test_orchestrator import ANA, NOW, Decider, FakeInvestigator, FakeTriage, FakeWriter
 from test_tools import FakePolicy, decide, make, register
 
@@ -26,6 +26,40 @@ def served(tmp_path):
 def test_the_server_exposes_every_tool_with_its_contract(served):
     _, _, port = served
     assert sorted(port.list_tools()) == sorted(tool.name for tool in TOOLS)
+
+
+def test_the_readonly_profile_exposes_only_the_read_tools(tmp_path):
+    local = make(tmp_path)
+    with McpToolPort(build_server(local.erp, local.policy, "readonly")) as port:
+        exposed = sorted(port.list_tools())
+    assert exposed == sorted(tool.name for tool in TOOLS if not tool.writes)
+    assert len(exposed) == 11 and not {"register_pr", "update_pr", "approve_pr", "reject_pr", "send_email"} & set(exposed)
+
+
+def test_a_write_tool_is_not_callable_through_the_readonly_profile(tmp_path):
+    local = make(tmp_path)
+
+    async def raw():
+        async with Client(build_server(local.erp, local.policy, "readonly")) as client:
+            return await client.call_tool(
+                "register_pr", {"run_id": "r", "requester_email": "ana.silva@exemplo.pt"}, raise_on_error=False
+            )
+
+    response = asyncio.run(raw())
+    assert response.is_error
+    assert local.erp.get_actions() == []
+
+
+def test_a_read_still_works_through_the_readonly_profile(tmp_path):
+    local = make(tmp_path)
+    with McpToolPort(build_server(local.erp, local.policy, "readonly")) as port:
+        remote = ToolContext(erp=local.erp, policy=local.policy, run_id="x", port=port)
+        assert call_tool(remote, "get_person", {"email": "ana.silva@exemplo.pt"}).ok
+
+
+def test_an_unknown_profile_is_rejected():
+    with pytest.raises(ValueError):
+        tools_for("admin")
 
 
 def test_a_read_through_mcp_equals_the_direct_call(served):
