@@ -4,10 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
 
-from pr_triage.agents.common import AgentFailure, default_model
+from pr_triage.agents.common import AgentFailure, classify, default_model
 from pr_triage.authz import PolicyVerdict
 from pr_triage.domain.schemas import PurchaseRequest
 from pr_triage.tools import TOOLS, ToolContext, ToolResult, call_tool
@@ -267,14 +266,10 @@ def run_investigation(
             deps=deps,
             usage_limits=UsageLimits(request_limit=REQUEST_LIMIT, tool_calls_limit=TOOL_CALLS_LIMIT),
         )
-    except UsageLimitExceeded as error:
-        return _failed("step_limit", str(error), False, deps)
-    except UnexpectedModelBehavior as error:
-        return _failed("invalid_output", str(error), False, deps)
-    except ModelAPIError as error:
-        return _failed("llm_unavailable", str(error), True, deps)
     except Exception as error:
-        return _failed("unexpected_error", f"{type(error).__name__}: {error}", False, deps)
+        code, retryable = classify(error)
+        message = str(error) if code != "unexpected_error" else f"{type(error).__name__}: {error}"
+        return _failed(code, message, retryable, deps)
     return InvestigationResult(
         report=outcome.output, tool_calls=deps.log, rejections=deps.rejections
     )
