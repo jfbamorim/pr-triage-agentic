@@ -125,6 +125,7 @@ class ErpStore:
         faults: Faults | None = None,
     ):
         self.path = str(path)
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.clock = clock
         self.faults = faults or Faults()
         self._calls: dict[str, int] = {}

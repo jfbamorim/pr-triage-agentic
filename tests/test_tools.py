@@ -34,6 +34,9 @@ class FakePolicy:
     def clause_ids(self):
         return CLAUSES
 
+    def get(self, chunk_id):
+        return self.search(chunk_id, 1)[0].model_copy(update={"chunk_id": chunk_id})
+
 
 def make(tmp_path, faults=None, policy=None, run_id="run-1"):
     erp = create_demo_erp(tmp_path / "erp.db", clock=lambda: NOW, faults=faults)

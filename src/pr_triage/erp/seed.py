@@ -87,6 +87,7 @@ def seed(store: ErpStore) -> None:
 
 
 def create_demo_erp(path: str | Path, **kwargs) -> ErpStore:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).unlink(missing_ok=True)
     store = ErpStore(path, **kwargs)
     seed(store)

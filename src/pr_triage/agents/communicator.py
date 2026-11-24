@@ -207,6 +207,10 @@ Regras:
 - Não digas quem é o responsável do centro de custo nem atribuas a decisão a ninguém além do que
   diz decided_by. Quando uma cláusula fala de um papel (por exemplo «o responsável do centro de custo»),
   cita a regra sem a aplicar a pessoas concretas.
+- Não afirmes que uma condição ou cláusula foi cumprida, satisfeita ou validada, a não ser que o briefing o
+  diga expressamente em reasons. Ao citar uma cláusula, limita-te a dizer o que ela estabelece.
+- Reflete fielmente os motivos (cotações, contrato-quadro, orçamento, verificações). Não digas que o pedido
+  está conforme a política se os motivos não o disserem.
 - Cita cada cláusula do briefing pelo número (por exemplo «cláusula 2.1») e explica numa frase simples o que diz.
 - Menciona o item, a quantidade e o valor do pedido.
 - Se o tipo for decision: diz logo no início se o pedido foi aprovado ou rejeitado e porquê.

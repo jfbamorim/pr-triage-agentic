@@ -1,0 +1,116 @@
+from datetime import datetime
+
+from pr_triage.agents.triage import TriageOutcome
+from pr_triage.authz import Action, AuthContext, HumanApproval, PolicyVerdict, authorize
+from pr_triage.domain.band import Band, determine_band
+from pr_triage.domain.status import Status
+from pr_triage.supervisor.state import TERMINAL, Move, RunState, RunStatus
+
+MAX_ATTEMPTS = 2
+MAX_STEPS = 25
+RESOLVABLE = {"cost_center", "estimated_value_eur"}
+
+
+def _allowed(action: Action, state: RunState, approval: HumanApproval | None, now: datetime) -> bool:
+    value = state.request.estimated_value_eur
+    executed = {"approved": Action.APPROVE_PR, "rejected": Action.REJECT_PR}.get(state.decision)
+    context = AuthContext(
+        request_id=state.pr_id or 0,
+        status=Status.VALID,
+        value_eur=value,
+        band=determine_band(value),
+        policy_verdict=state.investigation.policy_verdict,
+        cited_clauses=state.investigation.cited_clauses,
+        approval=approval,
+        executed_decision=executed,
+        now=now,
+    )
+    return authorize(action, context).allowed
+
+
+def quotes_short(state: RunState) -> bool:
+    inv = state.investigation
+    return inv.quotes_required is not None and (inv.quotes_found or 0) < inv.quotes_required
+
+
+def _blocked_moves(state: RunState) -> list[Move]:
+    blocked = state.blocked
+    moves = []
+    if blocked.retryable and state.attempts.get(blocked.stage.value, 0) < MAX_ATTEMPTS:
+        moves.append(blocked.stage)
+    return moves + [Move.ESCALATE]
+
+
+def _needs_info_moves(state: RunState) -> list[Move]:
+    triage = state.triage
+    if set(triage.missing) <= RESOLVABLE and state.investigation is None:
+        return [Move.INVESTIGATE, Move.ASK_USER]
+    return [Move.ASK_USER]
+
+
+def _decision_moves(state: RunState, approval: HumanApproval | None, now: datetime) -> list[Move]:
+    band = determine_band(state.request.estimated_value_eur)
+    verdict = state.investigation.policy_verdict
+    if state.decision is not None:
+        if not state.decision_verified:
+            return [Move.VERIFY]
+        if state.decision_email_sent:
+            return []
+        if _allowed(Action.SEND_DECISION_EMAIL, state, approval, now):
+            return [Move.SEND_DECISION_EMAIL]
+        return [Move.ESCALATE]
+    if quotes_short(state):
+        return [Move.ASK_USER, Move.ESCALATE]
+    if band == Band.HUMAN_ACTION:
+        if not state.dossier_sent:
+            if _allowed(Action.SEND_DOSSIER_EMAIL, state, approval, now):
+                return [Move.SEND_DOSSIER]
+            return [Move.ESCALATE]
+        if approval is None:
+            return []
+        action = approval.decision
+        move = Move.APPROVE if action == Action.APPROVE_PR else Move.REJECT
+        if action in (Action.APPROVE_PR, Action.REJECT_PR) and _allowed(action, state, approval, now):
+            return [move]
+        return [Move.ESCALATE]
+    if verdict == PolicyVerdict.UNCLEAR:
+        if state.investigation.questions_for_user:
+            return [Move.ASK_USER, Move.ESCALATE]
+        return [Move.ESCALATE]
+    action = Action.APPROVE_PR if verdict == PolicyVerdict.PERMITS else Action.REJECT_PR
+    if not _allowed(action, state, approval, now):
+        return [Move.ESCALATE]
+    return [Move.APPROVE if action == Action.APPROVE_PR else Move.REJECT]
+
+
+def allowed_moves(state: RunState, approval: HumanApproval | None, now: datetime) -> list[Move]:
+    if state.status in TERMINAL:
+        return []
+    if len(state.steps) >= MAX_STEPS:
+        return [Move.ESCALATE]
+    if state.blocked is not None:
+        return _blocked_moves(state)
+    triage = state.triage
+    if triage is None or (state.request is not None and triage.request != state.request):
+        return [Move.TRIAGE]
+    if triage.outcome in (TriageOutcome.SUSPICIOUS, TriageOutcome.INVALID):
+        return [Move.REFUSE]
+    if triage.outcome == TriageOutcome.NEEDS_INFO:
+        return _needs_info_moves(state)
+    if state.pr_id is None:
+        return [Move.REGISTER]
+    if state.registered_request != state.request:
+        return [Move.ESCALATE]
+    if (
+        state.investigation is None
+        or state.investigated_request != state.request
+        or state.investigated_pr_id != state.pr_id
+    ):
+        return [Move.INVESTIGATE]
+    return _decision_moves(state, approval, now)
+
+
+def pause_reason(state: RunState, approval: HumanApproval | None) -> RunStatus | None:
+    if state.status in TERMINAL or state.decision is not None or not state.dossier_sent:
+        return None
+    return RunStatus.WAITING_HUMAN if approval is None else None

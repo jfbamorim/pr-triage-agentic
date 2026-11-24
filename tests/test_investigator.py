@@ -6,6 +6,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pr_triage.agents.investigator import READ_TOOLS, check_investigation, run_investigation
 from pr_triage.erp import Faults
 from test_tools import FakePolicy, make
+from pr_triage.domain.category import Category
 from test_workflow import make_pr
 
 T1 = "02-escaloes-e-cotacoes#2.1"
@@ -35,13 +36,16 @@ def final(**report):
     return ("final", report)
 
 
-def investigate(tmp_path, plan, request=None, email="ana.silva@exemplo.pt", faults=None):
+def investigate(tmp_path, plan, request=None, email="ana.silva@exemplo.pt", faults=None,
+                pr_id=None, setup=None):
     ctx = make(tmp_path, faults=faults)
+    if setup:
+        setup(ctx)
     request = request or make_pr(
         item="monitores", quantity=2, estimated_value_eur=600.0,
         cost_center="CC-TI-100", category="it_equipment",
     )
-    return run_investigation(request, email, TRIAGE, ctx, model=script(plan))
+    return run_investigation(request, email, TRIAGE, ctx, pr_id=pr_id, model=script(plan))
 
 
 READ_ALL = tool_step(
@@ -61,7 +65,8 @@ GOOD_CHECKS = [
 
 def test_the_investigator_has_no_tools_bound_to_a_registered_request():
     names = {t.name for t in READ_TOOLS}
-    assert names.isdisjoint({"get_pr", "get_quotes", "get_approval_status"})
+    assert names.isdisjoint({"get_pr", "get_approval_status"})
+    assert "get_quotes" in names
 
 
 def test_a_supplier_check_needs_a_supplier_from_the_data(tmp_path):
@@ -274,3 +279,113 @@ def test_invalid_arguments_from_the_model_come_back_as_data(tmp_path):
     )
     assert result.failure is None
     assert result.tool_calls[0].result.error.code == "invalid_arguments"
+
+
+SERVICE = dict(item="consultoria", quantity=1, estimated_value_eur=3000.0,
+               cost_center="CC-TI-100", category=Category.SERVICES)
+
+
+def with_quotes(*suppliers, value=3000.0, category=Category.SERVICES):
+    def setup(ctx):
+        ctx.erp.register_pr("r", "agent", "ana.silva@exemplo.pt", "consultoria", 1, value,
+                            "CC-TI-100", category)
+        for i, supplier in enumerate(suppliers):
+            ctx.erp.add_quote(f"q{i}", "ana", 1, supplier, 2900.0 + i)
+
+    return setup
+
+
+READ_QUOTES = tool_step(
+    ("get_quotes", {"pr_id": 1}),
+    ("find_framework_contracts", {"category": "services"}),
+    ("search_policy", {"query": "cotações"}),
+)
+QUOTES_PROBLEM = [{"name": "quotes", "result": "problem", "evidence": "0 de 2"}]
+QUOTES_OK = [{"name": "quotes", "result": "ok", "evidence": "2 de 2"}]
+
+
+def test_missing_quotes_are_reported_and_the_verdict_cannot_permit(tmp_path):
+    request = make_pr(**SERVICE)
+    result = investigate(
+        tmp_path,
+        [READ_QUOTES,
+         final(checks=QUOTES_OK, quotes_required=2, quotes_found=0, policy_verdict="permits", cited_clauses=[T1]),
+         final(checks=QUOTES_PROBLEM, quotes_required=2, quotes_found=0, policy_verdict="unclear",
+               questions_for_user=["Faltam 2 cotações."])],
+        request=request, pr_id=1, setup=with_quotes(),
+    )
+    assert result.failure is None and result.report.quotes_found == 0
+    assert result.report.policy_verdict.value == "unclear"
+    assert "missing quotes must be reported as a problem" in "; ".join(result.rejections[0])
+
+
+def test_the_quotes_count_must_match_the_erp(tmp_path):
+    request = make_pr(**SERVICE)
+    lying = final(checks=QUOTES_OK, quotes_required=2, quotes_found=2, policy_verdict="permits", cited_clauses=[T1])
+    result = investigate(tmp_path, [READ_QUOTES, lying], request=request, pr_id=1, setup=with_quotes("S02"))
+    assert result.failure.code == "invalid_output"
+    assert "distinct suppliers in the ERP (1)" in result.failure.message
+
+
+def test_two_quotes_from_the_same_supplier_count_once(tmp_path):
+    request = make_pr(**SERVICE)
+    result = investigate(
+        tmp_path,
+        [READ_QUOTES,
+         final(checks=QUOTES_PROBLEM, quotes_required=2, quotes_found=1, policy_verdict="unclear",
+               questions_for_user=["Falta uma cotação de outro fornecedor."])],
+        request=request, pr_id=1, setup=with_quotes("S02", "S02"),
+    )
+    assert result.failure is None and result.report.quotes_found == 1
+
+
+def test_enough_quotes_from_different_suppliers_allow_a_permit(tmp_path):
+    request = make_pr(**SERVICE)
+    result = investigate(
+        tmp_path,
+        [READ_QUOTES,
+         final(checks=QUOTES_OK, quotes_required=2, quotes_found=2, policy_verdict="permits", cited_clauses=[T1])],
+        request=request, pr_id=1, setup=with_quotes("S02", "S03"),
+    )
+    assert result.failure is None and result.report.policy_verdict.value == "permits"
+
+
+def test_the_requirement_cannot_be_lowered_below_the_policy(tmp_path):
+    request = make_pr(**SERVICE)
+    result = investigate(
+        tmp_path,
+        [READ_QUOTES,
+         final(checks=QUOTES_OK, quotes_required=1, quotes_found=0, policy_verdict="unclear")],
+        request=request, pr_id=1, setup=with_quotes(),
+    )
+    assert "requires at least 2 quotes" in result.failure.message
+
+
+def test_the_quotes_must_actually_be_read(tmp_path):
+    request = make_pr(**SERVICE)
+    result = investigate(
+        tmp_path,
+        [tool_step(("find_framework_contracts", {"category": "services"})),
+         final(policy_verdict="unclear", questions_for_user=["?"])],
+        request=request, pr_id=1, setup=with_quotes("S02", "S03"),
+    )
+    assert "must be read with get_quotes" in result.failure.message
+
+
+def test_a_framework_contract_in_force_dispenses_the_quotes(tmp_path):
+    request = make_pr(item="portáteis", quantity=4, estimated_value_eur=14000.0,
+                      cost_center="CC-TI-100", category=Category.IT_EQUIPMENT)
+    setup = with_quotes(value=14000.0, category=Category.IT_EQUIPMENT)
+    result = investigate(
+        tmp_path,
+        [tool_step(("find_framework_contracts", {"category": "it_equipment"})),
+         final(policy_verdict="permits", cited_clauses=[T33])],
+        request=request, pr_id=1, setup=setup,
+    )
+    assert result.failure is None
+
+
+def test_before_registration_no_quotes_are_required(tmp_path):
+    request = make_pr(**SERVICE)
+    result = investigate(tmp_path, [final(policy_verdict="unclear", questions_for_user=["?"])], request=request)
+    assert result.failure is None

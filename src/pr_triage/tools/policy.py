@@ -2,7 +2,7 @@ from openai import OpenAI
 
 from pr_triage.domain.schemas import Evidence
 from pr_triage.rag.chunking import load_chunks
-from pr_triage.rag.retrieve import retrieve
+from pr_triage.rag.retrieve import fetch_by_id, retrieve
 
 
 class PolicyIndex:
@@ -14,3 +14,6 @@ class PolicyIndex:
 
     def clause_ids(self) -> set[str]:
         return {chunk.chunk_id for chunk in load_chunks()}
+
+    def get(self, chunk_id: str) -> Evidence:
+        return fetch_by_id(chunk_id)

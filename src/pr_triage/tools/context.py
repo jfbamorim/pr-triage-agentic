@@ -10,6 +10,8 @@ class PolicyPort(Protocol):
 
     def clause_ids(self) -> set[str]: ...
 
+    def get(self, chunk_id: str) -> Evidence: ...
+
 
 @dataclass
 class ToolContext:
