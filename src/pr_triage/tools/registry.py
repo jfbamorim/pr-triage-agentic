@@ -38,6 +38,12 @@ BY_NAME = {tool.name: tool for tool in TOOLS}
 
 
 def call_tool(ctx: ToolContext, name: str, arguments: dict) -> ToolResult:
+    if ctx.port is not None:
+        return ctx.port.call(ctx, name, arguments)
+    return run_tool(ctx, name, arguments)
+
+
+def run_tool(ctx: ToolContext, name: str, arguments: dict) -> ToolResult:
     tool = BY_NAME.get(name)
     if tool is None:
         return failure("unknown_tool", f"There is no tool named {name}.")

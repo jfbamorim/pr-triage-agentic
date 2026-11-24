@@ -10,6 +10,7 @@ from pr_triage.authz import Action, HumanApproval
 from pr_triage.erp import ErpStore, create_demo_erp
 from pr_triage.supervisor.live import live_orchestrator
 from pr_triage.supervisor.state import RunState
+from pr_triage.toolserver.client import McpToolPort
 from pr_triage.supervisor.store import RunStore
 from pr_triage.tools.policy import PolicyIndex
 
@@ -27,6 +28,12 @@ def show(state: RunState, erp: ErpStore) -> None:
         print(f"  {step.n:>2}. {step.move.value:<20} {mode:<10} {step.outcome}")
         if not step.forced:
             print(f"      motivo: {step.reason}")
+    inv = state.investigation
+    if inv is not None:
+        print(f"  investigação: {inv.policy_verdict.value} | cláusulas {', '.join(inv.cited_clauses) or '-'}")
+        for check in inv.checks:
+            print(f"    {check.name.value:<18} {check.result.value:<11} {check.evidence}")
+        print(f"    {inv.summary}")
     if state.pr_id:
         pr = erp.get_pr(state.pr_id)
         print(f"  ERP: pedido {pr.pr_id} {pr.state.value}, {pr.value_eur:g} €, {pr.cost_center}")
@@ -36,6 +43,7 @@ def show(state: RunState, erp: ErpStore) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--no-mcp", action="store_true", help="chama as tools diretamente, sem servidor MCP")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
     run = sub.add_parser("run")
@@ -63,7 +71,8 @@ def main() -> None:
 
     erp = ErpStore(ERP_PATH)
     store = RunStore(RUNS_PATH)
-    orchestrator = live_orchestrator(erp, PolicyIndex(OpenAI()), store, OpenAI())
+    port = None if args.no_mcp or args.command in ("quote", "approve", "show") else McpToolPort.stdio(ERP_PATH).start()
+    orchestrator = live_orchestrator(erp, PolicyIndex(OpenAI()), store, OpenAI(), port=port)
 
     if args.command == "run":
         state = orchestrator.start(args.text, args.email, args.id)
@@ -95,6 +104,8 @@ def main() -> None:
         return
     else:
         state = store.load(args.run_id)
+    if port is not None:
+        port.close()
     show(state, erp)
 
 

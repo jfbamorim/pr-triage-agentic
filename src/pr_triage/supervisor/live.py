@@ -7,7 +7,7 @@ from pr_triage.erp import ErpStore
 from pr_triage.supervisor.agent import make_decider
 from pr_triage.supervisor.orchestrator import Orchestrator, Specialists
 from pr_triage.supervisor.store import RunStore
-from pr_triage.tools import PolicyPort
+from pr_triage.tools import PolicyPort, ToolPort
 
 
 def live_specialists(client: OpenAI, model=None) -> Specialists:
@@ -21,5 +21,7 @@ def live_specialists(client: OpenAI, model=None) -> Specialists:
     )
 
 
-def live_orchestrator(erp: ErpStore, policy: PolicyPort, store: RunStore, client: OpenAI, model=None) -> Orchestrator:
-    return Orchestrator(erp, policy, store, live_specialists(client, model))
+def live_orchestrator(
+    erp: ErpStore, policy: PolicyPort, store: RunStore, client: OpenAI, model=None, port: ToolPort | None = None
+) -> Orchestrator:
+    return Orchestrator(erp, policy, store, live_specialists(client, model), port)

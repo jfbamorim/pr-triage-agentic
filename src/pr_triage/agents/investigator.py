@@ -139,6 +139,9 @@ def _check_quotes(report: InvestigationReport, deps: InvestigatorDeps) -> list[s
         return ["a framework contract may dispense the quotes: check it with find_framework_contracts first"]
     floor = quotes_floor(deps)
     if floor == 0:
+        quotes_check = next((c for c in report.checks if c.name == CheckName.QUOTES), None)
+        if quotes_check is not None and quotes_check.result == CheckResult.PROBLEM and deps.pr_id is not None:
+            return ["no quotes are required for this request, so the quotes check cannot be a problem"]
         return []
     problems: list[str] = []
     seen = _quotes_seen(deps)

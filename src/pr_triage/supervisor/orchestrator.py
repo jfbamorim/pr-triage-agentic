@@ -25,7 +25,7 @@ from pr_triage.supervisor.state import (
     apply_resolved_fields,
 )
 from pr_triage.supervisor.store import RunStore
-from pr_triage.tools import PolicyPort, ToolContext, ToolResult, call_tool
+from pr_triage.tools import PolicyPort, ToolContext, ToolPort, ToolResult, call_tool
 
 USER_FIXABLE = {"unknown_cost_center", "inactive_cost_center"}
 
@@ -39,7 +39,15 @@ class Specialists:
 
 
 class Orchestrator:
-    def __init__(self, erp: ErpStore, policy: PolicyPort, store: RunStore, specialists: Specialists):
+    def __init__(
+        self,
+        erp: ErpStore,
+        policy: PolicyPort,
+        store: RunStore,
+        specialists: Specialists,
+        port: ToolPort | None = None,
+    ):
+        self.port = port
         self.erp = erp
         self.policy = policy
         self.store = store
@@ -113,7 +121,7 @@ class Orchestrator:
         return state
 
     def _ctx(self, state: RunState) -> ToolContext:
-        return ToolContext(erp=self.erp, policy=self.policy, run_id=state.run_id)
+        return ToolContext(erp=self.erp, policy=self.policy, run_id=state.run_id, port=self.port)
 
     def _save(self, state: RunState) -> None:
         state.updated_at = self.erp.clock()

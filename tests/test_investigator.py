@@ -401,3 +401,13 @@ def test_before_registration_no_quotes_are_required(tmp_path):
     request = make_pr(**SERVICE)
     result = investigate(tmp_path, [final(policy_verdict="unclear", questions_for_user=["?"])], request=request)
     assert result.failure is None
+
+
+def test_a_quotes_problem_is_rejected_when_no_quotes_are_required(tmp_path):
+    request = make_pr(item="monitores", quantity=2, estimated_value_eur=600.0,
+                      cost_center="CC-TI-100", category=Category.IT_EQUIPMENT)
+    wrong = final(checks=QUOTES_PROBLEM, policy_verdict="blocks", cited_clauses=[T1])
+    right = final(checks=[], policy_verdict="permits", cited_clauses=[T1])
+    result = investigate(tmp_path, [wrong, right], request=request, pr_id=1, setup=with_quotes(value=600.0))
+    assert result.failure is None and result.report.policy_verdict.value == "permits"
+    assert "no quotes are required" in "; ".join(result.rejections[0])
