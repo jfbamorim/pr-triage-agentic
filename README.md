@@ -180,7 +180,11 @@ Guarda uma só coisa, por requerente: o centro de custo que usou e viu aprovado,
 | Versão | Etiqueta | O que faz |
 |---|---|---|
 | Curso 1 | `v1-curso1` | Workflow de triagem com RAG, sem ERP, sem agentes e sem efeitos |
-| Curso 2 | `v2-agentes` e seguintes | Agentes, tools por MCP, ERP, retoma, memória |
+| Marco 1 | `marco1-first-line` (231 testes) | Tools com autorização em código, Investigador, Comunicador, retoma com reconciliação, servidor MCP |
+| Marco 2 | `marco2-on-call` (250 testes) | Factos do ERP em código, memória por requerente com origem, validade e correção |
+| Marco 3 | `marco3-response-center` (294 testes) | Aprovações por papel, correção de pedidos registados, encaminhamento por falta de orçamento, verificação de todos os campos, perfis do MCP, interface em chat, avaliação comparada |
+
+As etiquetas `v2-agentes`, `v2-agentes-factos` e `v2-memoria` são pontos intermédios dentro destes marcos.
 
 O baseline só consegue dizer "pronto", "faltam dados", "rejeitado" ou "ação manual", sobre o texto. Não consulta orçamentos, contratos, cotações nem fornecedores, e não executa nada. As corridas reais que guiaram o desenho, com os problemas que revelaram e as correções, estão em `docs/execucoes/`:
 
@@ -194,11 +198,16 @@ Os 19 casos estão em `data/eval/e2e_cases.jsonl`. Cada um tem o pedido, o guiã
 ```bash
 uv run python eval/run_cases.py --label v3                       # simulado: sem LLM, determinístico
 uv run python eval/run_cases.py --mode real --repeat 3 --label v3 # modelo real, para ver a variação
-uv run python eval/run_cases.py --mode baseline --label v1-curso1 # só a triagem do Curso 1
 uv run python eval/report.py eval/results/e2e-*.json > docs/casos-e-resultados.md
 ```
 
-O modo simulado usa especialistas simulados (`eval/e2e_fakes.py`) e mede o que é código: controlo, efeitos, retoma e falhas. O modo real usa o modelo e mede a interpretação, que varia entre corridas. O modo `baseline` corre só o workflow do Curso 1, que não tem ERP, por isso não tem efeitos para comparar; mostra apenas se a triagem acerta.
+O modo simulado usa especialistas simulados (`eval/e2e_fakes.py`) e mede o que é código: controlo, efeitos, retoma e falhas. O modo real usa o modelo e mede a interpretação, que varia entre corridas. O modo `baseline` corre só o workflow do Curso 1, que não tem ERP, por isso não tem efeitos para comparar; mostra apenas se a triagem acerta. Dos 19 casos, 17 têm uma expectativa de triagem; `correcoes-a-b-a-b` e `erp-alterado-durante-a-espera` só fazem sentido com ERP e ficam como não aplicáveis. O modo `baseline` carrega o workflow do checkout atual, por isso, para medir o Curso 1 propriamente dito, corre-se num `worktree` no tag `v1-curso1` (cada resultado regista o commit e se a árvore tinha alterações):
+
+```bash
+git worktree add ../prt-v1 v1-curso1
+cp eval/run_cases.py eval/e2e_fakes.py ../prt-v1/eval/ && cp data/eval/e2e_cases.jsonl ../prt-v1/data/eval/ && cp .env ../prt-v1/
+(cd ../prt-v1 && uv sync && uv run python eval/run_cases.py --mode baseline --label v1-curso1) && cp ../prt-v1/eval/results/e2e-baseline-v1-curso1.json eval/results/
+```
 
 Para comparar versões, o mesmo ficheiro de casos e o mesmo runner correm noutra versão do código num `worktree`:
 
@@ -214,7 +223,7 @@ Antes de aceitar a avaliação, confirmei que o conjunto consegue falhar: numa c
 
 | Execução | Resultado |
 |---|---|
-| Baseline `v1-curso1` (só a triagem, modelo real) | 19/19 na triagem; sem ERP, por isso sem efeitos para comparar |
+| Baseline `v1-curso1` (só a triagem, modelo real) | 17/17 verificações de triagem; 2 cenários não aplicáveis; sem ERP, por isso sem efeitos para comparar |
 | `051d9b9`, a versão antes da revisão externa (simulado) | **11/19** |
 | Versão atual (simulado) | **19/19** |
 | Versão atual, modelo real, 8 casos × 3 repetições | **23/24** |
@@ -254,3 +263,5 @@ docs/execucoes/          corridas reais usadas como evidência
 tests/                   294 testes
 eval/                    casos de ponta a ponta, runner e relatório
 ```
+
+

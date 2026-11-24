@@ -12,6 +12,15 @@ CLOCK = datetime(2026, 11, 24, 10, 0, tzinfo=timezone.utc)
 RUN_ID = "case"
 
 
+def git_state() -> str:
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "desconhecido"
+    return commit + (" (alterações por commitar)" if dirty else "")
+
+
 def load_cases(only: list[str] | None) -> list[dict]:
     cases = [json.loads(line) for line in CASES_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
     return [c for c in cases if not only or c["id"] in only]
@@ -182,18 +191,26 @@ def main() -> None:
                     record.update(seen=seen, failures=check(case["expect"], seen, case["requester"]))
             except Exception as error:
                 record.update(seen=None, failures=[f"erro: {type(error).__name__}: {error}"])
-            record["passed"] = not record["failures"]
+            if args.mode == "baseline" and not case["triage"]:
+                record["passed"] = None
+            else:
+                record["passed"] = not record["failures"]
             results.append(record)
-            print(f"{'OK  ' if record['passed'] else 'FALHA'} {case['id']}" + (f" #{attempt}" if args.repeat > 1 else ""))
+            status = "N/A " if record["passed"] is None else "OK  " if record["passed"] else "FALHA"
+            print(f"{status} {case['id']}" + (f" #{attempt}" if args.repeat > 1 else ""))
             for failure in record["failures"]:
                 print("      ", failure)
 
-    passed = sum(r["passed"] for r in results)
-    print(f"\n{passed}/{len(results)} ({args.mode}, versão {label})")
+    applicable = [r for r in results if r["passed"] is not None]
+    passed = sum(r["passed"] for r in applicable)
+    skipped = len(results) - len(applicable)
+    suffix = f"; {skipped} não aplicáveis" if skipped else ""
+    print(f"\n{passed}/{len(applicable)}{suffix} ({args.mode}, versão {label})")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     out = RESULTS_DIR / f"e2e-{args.mode}-{label.replace('/', '_')}.json"
     meta = {"version": label, "mode": args.mode, "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "model": None if args.mode == "simulated" else "gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão)"}
+            "model": None if args.mode == "simulated" else "gpt-4.1-mini (OPENAI_MODEL / OPENAI_AGENT_MODEL por omissão)",
+            "commit": git_state()}
     out.write_text(json.dumps({"meta": meta, "results": results}, ensure_ascii=False, indent=2), encoding="utf-8")
     print("Resultados em", out)
 

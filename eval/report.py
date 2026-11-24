@@ -17,7 +17,9 @@ def load(path: str) -> dict:
 def cell(meta: dict, records: list[dict] | None) -> str:
     if not records:
         return "n/a"
-    ok = sum(r["passed"] for r in records)
+    if all(r["passed"] is None for r in records):
+        return "n/a"
+    ok = sum(bool(r["passed"]) for r in records)
     if meta["mode"] == "baseline":
         return "triagem OK, sem efeitos" if ok == len(records) else "triagem FALHA, sem efeitos"
     return "OK" if ok == len(records) and len(records) == 1 else f"{ok}/{len(records)}" if len(records) > 1 else "FALHA"
@@ -28,10 +30,10 @@ def main(paths: list[str]) -> None:
     cases = [json.loads(line) for line in CASES_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
     print("# Casos e resultados\n")
     print("## Execuções comparadas\n")
-    print("| Execução | Modo | Versão | Modelo | Data |\n|---|---|---|---|---|")
+    print("| Execução | Modo | Versão | Commit | Modelo | Data |\n|---|---|---|---|---|---|")
     for number, run in enumerate(runs, 1):
         m = run["meta"]
-        print(f"| E{number} | {m['mode']} | {m['version']} | {m['model'] or 'modelos simulados (sem LLM)'} | {m['date']} |")
+        print(f"| E{number} | {m['mode']} | {m['version']} | {m.get('commit', 'n/d')} | {m['model'] or 'modelos simulados (sem LLM)'} | {m['date']} |")
     heads = " | ".join(f"E{n}" for n in range(1, len(runs) + 1))
     print(f"\n## Resultado por caso\n\n| Caso | Grupo | Esperado | {heads} |\n|---|---|---|{'---|' * len(runs)}")
     for case in cases:
@@ -42,13 +44,17 @@ def main(paths: list[str]) -> None:
     print("\n## Totais\n")
     for number, run in enumerate(runs, 1):
         records = [r for rs in run["cases"].values() for r in rs]
-        print(f"- E{number}: {sum(r['passed'] for r in records)}/{len(records)}")
+        applicable = [r for r in records if r["passed"] is not None]
+        skipped = len(records) - len(applicable)
+        label = "verificações de triagem" if run["meta"]["mode"] == "baseline" else "casos"
+        suffix = f"; {skipped} não aplicáveis" if skipped else ""
+        print(f"- E{number}: {sum(r['passed'] for r in applicable)}/{len(applicable)} {label}{suffix}")
     print("\n## O que falhou e porquê\n")
     any_failure = False
     for number, run in enumerate(runs, 1):
         for case_id, records in run["cases"].items():
             for record in records:
-                if not record["passed"]:
+                if record["passed"] is False:
                     any_failure = True
                     print(f"- **E{number} · `{case_id}`**: " + "; ".join(record["failures"]))
     if not any_failure:
