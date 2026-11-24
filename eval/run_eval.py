@@ -1,0 +1,239 @@
+import argparse
+import json
+import time
+from collections import defaultdict
+from pathlib import Path
+
+from openai import OpenAI
+
+from pr_triage.domain.followup import fallback_followup
+from pr_triage.domain.schemas import LLMCall, WorkflowResult
+from pr_triage.llm.extract_purchase_request import PROMPT_VERSION as EXTRACTION_VERSION
+from pr_triage.llm.screen_input import PROMPT_VERSION as SCREENING_VERSION
+from pr_triage.llm.summarize_result import PROMPT_VERSION as SUMMARY_VERSION
+from pr_triage.llm.write_followup import PROMPT_VERSION as FOLLOWUP_VERSION
+from pr_triage.workflow import run_workflow
+
+CASES_PATH = Path("data/eval/cases.jsonl")
+
+PRICES_PER_MILLION = {
+    "gpt-4.1-mini": (0.40, 1.60),
+    "text-embedding-3-small": (0.02, 0.0),
+}
+
+
+def load_cases(split: str, group: str | None) -> list[dict]:
+    lines = CASES_PATH.read_text(encoding="utf-8").splitlines()
+    cases = [json.loads(line) for line in lines if line.strip()]
+    if split != "all":
+        cases = [c for c in cases if c["split"] == split]
+    if group:
+        cases = [c for c in cases if c["group"] == group]
+    return cases
+
+
+def actual_values(result: WorkflowResult) -> dict:
+    return {
+        "status": result.status.value,
+        "reason": result.reason.value if result.reason else None,
+        "band": result.band.value if result.band else None,
+        "escalation": result.escalation.value if result.escalation else None,
+        "missing": result.missing,
+        "invalid": result.invalid,
+    }
+
+
+def summary_values(result: WorkflowResult) -> dict:
+    if not result.evidence:
+        return {"state": "n/a", "text": None, "cited": []}
+    if result.summary is None:
+        return {"state": "failed", "text": None, "cited": []}
+    return {
+        "state": "ok",
+        "text": result.summary.text,
+        "cited": result.summary.cited_chunk_ids,
+    }
+
+
+def follow_up_values(result: WorkflowResult) -> dict:
+    if result.follow_up is None:
+        return {"state": "n/a", "text": None}
+    if result.follow_up == fallback_followup(result.missing):
+        return {"state": "fallback", "text": result.follow_up}
+    return {"state": "ok", "text": result.follow_up}
+
+
+def call_cost(call: dict) -> float:
+    price_in, price_out = PRICES_PER_MILLION.get(call["model"], (0.0, 0.0))
+    return (call["input_tokens"] * price_in + call["output_tokens"] * price_out) / 1e6
+
+
+def calls_values(calls: list[LLMCall]) -> list[dict]:
+    return [call.model_dump() for call in calls]
+
+
+def check(expected: dict, result: WorkflowResult) -> tuple[list[str], float | None]:
+    actual = actual_values(result)
+    failures = []
+
+    for field in ("status", "reason", "band", "escalation"):
+        if field in expected and actual[field] != expected[field]:
+            failures.append(
+                f"{field}: esperado {expected[field]}, obtido {actual[field]}"
+            )
+
+    for field in ("missing", "invalid"):
+        if field in expected and sorted(actual[field]) != sorted(expected[field]):
+            failures.append(
+                f"{field}: esperado {expected[field]}, obtido {actual[field]}"
+            )
+
+    required = expected.get("evidence_must_include", [])
+    found_ids = {e.chunk_id for e in result.evidence}
+    absent = [chunk_id for chunk_id in required if chunk_id not in found_ids]
+    if absent:
+        failures.append("evidência em falta: " + ", ".join(absent))
+
+    recall = (len(required) - len(absent)) / len(required) if required else None
+    return failures, recall
+
+
+def run_case(case: dict, client: OpenAI) -> dict:
+    base = {"id": case["id"], "group": case["group"], "split": case["split"]}
+    start = time.perf_counter()
+    try:
+        result = run_workflow(case["text"], client)
+    except Exception as error:
+        return {
+            **base,
+            "passed": False,
+            "failures": [f"erro: {error}"],
+            "recall": None,
+            "latency": time.perf_counter() - start,
+            "actual": None,
+            "summary": {"state": "n/a", "text": None, "cited": []},
+            "follow_up": {"state": "n/a", "text": None},
+            "evidence": [],
+            "calls": [],
+        }
+    latency = time.perf_counter() - start
+    failures, recall = check(case["expected"], result)
+    return {
+        **base,
+        "passed": not failures,
+        "failures": failures,
+        "recall": recall,
+        "latency": latency,
+        "actual": actual_values(result),
+        "summary": summary_values(result),
+        "follow_up": follow_up_values(result),
+        "evidence": [
+            {"chunk_id": e.chunk_id, "score": e.score} for e in result.evidence
+        ],
+        "calls": calls_values(result.calls),
+    }
+
+
+def print_usage(results: list[dict]) -> None:
+    by_step = defaultdict(list)
+    for r in results:
+        for call in r["calls"]:
+            by_step[call["step"]].append(call)
+
+    print("\nPor passo")
+    print(f"  {'passo':12} {'chamadas':>8} {'tokens in':>10} {'tokens out':>11} {'latência':>9}")
+    for step, calls in by_step.items():
+        tokens_in = sum(c["input_tokens"] for c in calls)
+        tokens_out = sum(c["output_tokens"] for c in calls)
+        mean_latency = sum(c["latency"] for c in calls) / len(calls)
+        print(
+            f"  {step:12} {len(calls):>8} {tokens_in:>10} {tokens_out:>11} {mean_latency:>8.2f}s"
+        )
+
+    all_calls = [c for r in results for c in r["calls"]]
+    total_in = sum(c["input_tokens"] for c in all_calls)
+    total_out = sum(c["output_tokens"] for c in all_calls)
+    total_cost = sum(call_cost(c) for c in all_calls)
+    print(f"\nTokens: {total_in} in, {total_out} out")
+    print(
+        f"Custo estimado: {total_cost:.4f} $ no total, "
+        f"{total_cost / len(results):.4f} $ por caso"
+    )
+
+
+def print_summary(results: list[dict]) -> None:
+    by_group = defaultdict(list)
+    for r in results:
+        by_group[r["group"]].append(r)
+
+    print("\nPor grupo")
+    for group, items in by_group.items():
+        passed = sum(r["passed"] for r in items)
+        print(f"  {group:16} {passed}/{len(items)}")
+
+    total = sum(r["passed"] for r in results)
+    print(f"\nTotal: {total}/{len(results)}")
+
+    recalls = [r["recall"] for r in results if r["recall"] is not None]
+    if recalls:
+        print(f"Source recall médio: {sum(recalls) / len(recalls):.2f}")
+
+    with_summary = [r for r in results if r["summary"]["state"] != "n/a"]
+    ok = sum(r["summary"]["state"] == "ok" for r in with_summary)
+    if with_summary:
+        print(f"Resumos com citações válidas: {ok}/{len(with_summary)}")
+
+    with_follow_up = [r for r in results if r["follow_up"]["state"] != "n/a"]
+    follow_up_ok = sum(r["follow_up"]["state"] == "ok" for r in with_follow_up)
+    if with_follow_up:
+        print(f"Perguntas do modelo válidas: {follow_up_ok}/{len(with_follow_up)}")
+
+    mean_latency = sum(r["latency"] for r in results) / len(results)
+    print(f"Latência média: {mean_latency:.1f}s")
+
+    print_usage(results)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--split", choices=["dev", "holdout", "all"], default="dev")
+    parser.add_argument("--group")
+    parser.add_argument("--out")
+    args = parser.parse_args()
+
+    cases = load_cases(args.split, args.group)
+    if not cases:
+        print("Nenhum caso encontrado.")
+        return
+
+    print(
+        f"Prompts: {SCREENING_VERSION}, {EXTRACTION_VERSION}, "
+        f"{SUMMARY_VERSION}, {FOLLOWUP_VERSION}\n"
+    )
+
+    client = OpenAI()
+    results = []
+    for case in cases:
+        outcome = run_case(case, client)
+        results.append(outcome)
+        label = "PASS" if outcome["passed"] else "FAIL"
+        print(f"{label}  {outcome['id']}  ({outcome['latency']:.1f}s)")
+        for failure in outcome["failures"]:
+            print(f"      {failure}")
+        if outcome["summary"]["state"] == "failed":
+            print("      resumo: falhou")
+        if outcome["follow_up"]["state"] != "n/a":
+            print(f"      pergunta ({outcome['follow_up']['state']}): {outcome['follow_up']['text']}")
+
+    print_summary(results)
+
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+
+if __name__ == "__main__":
+    main()
