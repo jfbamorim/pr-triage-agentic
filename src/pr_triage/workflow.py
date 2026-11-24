@@ -49,6 +49,10 @@ class Step(str, Enum):
     SUMMARY = "summary"
 
 
+class ScreeningUnavailable(Exception):
+    pass
+
+
 class StepEvent(BaseModel):
     step: Step
     state: Literal["running", "done", "failed"]
@@ -116,12 +120,18 @@ def _describe_request(pr: PurchaseRequest) -> str:
 
 
 def iter_workflow(
-    text: str, client: OpenAI, previous: PurchaseRequest | None = None
+    text: str,
+    client: OpenAI,
+    previous: PurchaseRequest | None = None,
+    strict_screening: bool = False,
 ) -> Iterator[StepEvent | WorkflowResult]:
     calls: list[LLMCall] = []
 
     yield StepEvent(step=Step.SCREENING, state="running")
     screening = screen_input(text, client, calls)
+    if screening is None and strict_screening:
+        yield StepEvent(step=Step.SCREENING, state="failed", detail="Triagem indisponível")
+        raise ScreeningUnavailable("The screening step returned no usable answer.")
     if screening is None or screening.is_suspicious:
         yield StepEvent(step=Step.SCREENING, state="failed", detail="Texto suspeito")
         yield WorkflowResult(
@@ -230,9 +240,12 @@ def iter_workflow(
 
 
 def run_workflow(
-    text: str, client: OpenAI, previous: PurchaseRequest | None = None
+    text: str,
+    client: OpenAI,
+    previous: PurchaseRequest | None = None,
+    strict_screening: bool = False,
 ) -> WorkflowResult:
-    for event in iter_workflow(text, client, previous):
+    for event in iter_workflow(text, client, previous, strict_screening):
         if isinstance(event, WorkflowResult):
             return event
     raise RuntimeError("workflow ended without a result")
