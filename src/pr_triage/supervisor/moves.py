@@ -60,7 +60,7 @@ def _decision_moves(state: RunState, approval: HumanApproval | None, now: dateti
             return [Move.SEND_DECISION_EMAIL]
         return [Move.ESCALATE]
     if quotes_short(state):
-        return [Move.ASK_USER, Move.ESCALATE]
+        return [Move.ASK_USER]
     if band == Band.HUMAN_ACTION:
         if not state.dossier_sent:
             if _allowed(Action.SEND_DOSSIER_EMAIL, state, approval, now):
@@ -75,7 +75,7 @@ def _decision_moves(state: RunState, approval: HumanApproval | None, now: dateti
         return [Move.ESCALATE]
     if verdict == PolicyVerdict.UNCLEAR:
         if state.investigation.questions_for_user:
-            return [Move.ASK_USER, Move.ESCALATE]
+            return [Move.ASK_USER]
         return [Move.ESCALATE]
     action = Action.APPROVE_PR if verdict == PolicyVerdict.PERMITS else Action.REJECT_PR
     if not _allowed(action, state, approval, now):

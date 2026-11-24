@@ -129,10 +129,10 @@ def test_a_request_that_changed_after_registration_is_escalated():
 def test_missing_quotes_pause_the_run_before_any_decision():
     short = ready(3000.0)
     short.investigation.quotes_required, short.investigation.quotes_found = 2, 1
-    assert moves(short) == [Move.ASK_USER, Move.ESCALATE]
+    assert moves(short) == [Move.ASK_USER]
     big = ready(14000.0)
     big.investigation.quotes_required, big.investigation.quotes_found = 3, 0
-    assert moves(big) == [Move.ASK_USER, Move.ESCALATE]
+    assert moves(big) == [Move.ASK_USER]
 
 
 def test_enough_quotes_let_the_run_proceed():
@@ -166,7 +166,7 @@ def test_middle_band_follows_the_verdict_and_needs_a_clause():
 
 def test_an_unclear_verdict_asks_the_user_when_there_is_a_question():
     unclear = ready(3000.0, verdict=PolicyVerdict.UNCLEAR, questions=("Qual o fornecedor?",))
-    assert moves(unclear) == [Move.ASK_USER, Move.ESCALATE]
+    assert moves(unclear) == [Move.ASK_USER]
     assert moves(ready(3000.0, verdict=PolicyVerdict.UNCLEAR)) == [Move.ESCALATE]
 
 

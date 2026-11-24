@@ -404,3 +404,10 @@ def test_a_supervisor_agent_that_insists_is_replaced_by_an_escalation():
     decide = decider_for("approve")
     choice = decide(blank_state(), [Move.INVESTIGATE, Move.ASK_USER])
     assert choice.move == Move.ESCALATE and choice.reason.startswith("supervisor_failed")
+
+
+def test_verification_accepts_the_clauses_in_any_order(tmp_path):
+    s = Setup(tmp_path)
+    s.investigator.clauses = ["03-fornecedores-e-categorias#3.3", "02-escaloes-e-cotacoes#2.1"]
+    state = s.start("monitores")
+    assert state.status == RunStatus.DONE and state.decision_verified

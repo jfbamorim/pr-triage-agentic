@@ -389,7 +389,7 @@ def verify_decision(erp: ErpStore, state: RunState) -> list[str]:
         return ["the purchase request does not exist in the ERP"]
     if pr.state.value != state.decision:
         problems.append(f"the ERP says {pr.state.value}, expected {state.decision}")
-    if pr.cited_clauses != state.investigation.cited_clauses:
+    if set(pr.cited_clauses) != set(state.investigation.cited_clauses):
         problems.append("the clauses recorded in the ERP differ from the decision")
     tool = "approve_pr" if state.decision == "approved" else "reject_pr"
     applied = [a for a in erp.get_actions(state.pr_id) if a.action == tool]

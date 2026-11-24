@@ -1,0 +1,116 @@
+=== f1 ===
+[11/24/26 16:20:23] INFO     Starting MCP server                transport.py:241
+                             'purchasing-tools' with transport                  
+                             'stdio'                                            
+
+run f1: needs_manual
+  forced | the clauses recorded in the ERP differ from the decision
+   1. triage               forçado    ready
+   2. register             forçado    pr_id=8
+   3. investigate          forçado    verdict=permits
+   4. approve              forçado    approved
+   5. verify               forçado    blocked: the clauses recorded in the ERP differ from the decision
+   6. escalate             forçado    needs_manual
+  investigação: permits | cláusulas 03-fornecedores-e-categorias#3.3, 02-escaloes-e-cotacoes#2.1, 03-fornecedores-e-categorias#3.2
+    cost_center        ok          O centro de custo CC-TI-100 está ativo (Tecnologias de Informação).
+    budget             ok          Orçamento disponível de 105755 €, suficiente para 600 €.
+    catalog            ok          Monitor 27 polegadas: 2 x 289 € = 578 €; pedido de 600 €.
+    framework_contract ok          Contrato-quadro FC-001 (TechNova) em vigor, com 120000 € disponíveis.
+    supplier           ok          Fornecedor TechNova (S01) aprovado.
+    quotes             ok          A política não exige cotações para este pedido.
+    Pedido de 600 € para monitores de IT equipamento está dentro do orçamento e autorizado para centro de custo CC-TI-100. Compra feita através do catálogo do fornecedor em contrato-quadro FC-001, sem necessidade de cotações, conforme política para compras abaixo de 1 000 € e equipamento informático.
+  ERP: pedido 8 approved, 600 €, CC-TI-100
+  email [decision] para ana.silva@exemplo.pt: Aprovação de requisição de compra nº 8 - monitores
+    O pedido de compra de 2 monitores no valor de 600 € para o centro de custo CC-TI-100 foi aprovado pelo sistema automático de aprovação. A cláusula 2.1 indica que requisições abaixo de 1 000 € podem ser aprovadas pelo responsável do centro de custo sem necessidade de cotações. A cláusula 3.3 estabelece que equipamento informático, como monitores, deve ser comprado exclusivamente pelo catálogo de IT. A cláusula 3.2 determina que quando existe contrato-quadro, a compra deve ser feita ao abrigo dele, dispensando as cotações. O pedido utiliza fornecedor homologado TechNova, com contrato-quadro em vigor. Assim, o pedido está conforme as regras.
+real 14,80
+user 1,51
+sys 0,23
+
+=== f2 ===
+[11/24/26 16:20:38] INFO     Starting MCP server                transport.py:241
+                             'purchasing-tools' with transport                  
+                             'stdio'                                            
+
+run f2: needs_manual
+  forced | the clauses recorded in the ERP differ from the decision
+   1. triage               forçado    needs_info
+   2. investigate          supervisor verdict=unclear
+      motivo: Faltam o centro de custo e o valor, por isso o Investigador deve tentar completar esses campos a partir do ERP antes de perguntar ao utilizador.
+   3. triage               forçado    ready
+   4. register             forçado    pr_id=9
+   5. investigate          forçado    verdict=permits
+   6. approve              forçado    approved
+   7. verify               forçado    blocked: the clauses recorded in the ERP differ from the decision
+   8. escalate             forçado    needs_manual
+  investigação: permits | cláusulas 03-fornecedores-e-categorias#3.3, 03-fornecedores-e-categorias#3.2, 02-escaloes-e-cotacoes#2.2
+    cost_center        ok          O centro de custo CC-TI-100 está ativo (Tecnologias de Informação).
+    budget             ok          Orçamento disponível de 105755 €, suficiente para 1445 €.
+    catalog            ok          Monitor 27 polegadas: 5 x 289 € = 1445 €; pedido de 1445 €.
+    framework_contract ok          Contrato-quadro FC-001 (TechNova) em vigor, com 120000 € disponíveis.
+    supplier           ok          Fornecedor TechNova (S01) aprovado.
+    quotes             ok          A política não exige cotações para este pedido.
+    Pedido de 5 monitores no valor de 1445 € para o centro de custo CC-TI-100, com orçamento disponível suficiente e fornecedor TechNova aprovado. Equipamento informático deve ser comprado através do catálogo IT (cláusula 3.3). Existe contrato-quadro que isenta a exigência de cotações (cláusula 3.2). O valor está entre 1 000 € e 5 000 €, que normalmente exige duas cotações, mas aqui não são necessárias devido ao contrato-quadro (cláusula 2.2). Pedido permite-se pela política.
+  ERP: pedido 9 approved, 1445 €, CC-TI-100
+  email [decision] para ana.silva@exemplo.pt: Aprovação da requisição 9 para compra de monitores
+    O pedido nº 9 de compra de 5 monitores no valor total de 1445 € foi aprovado pelo sistema automático de aprovação.
+
+Segundo a cláusula 2.2, requisições entre 1000 € e 5000 € exigem duas cotações e aprovação do responsável do departamento. A cláusula 3.3 determina que monitores devem ser comprados pelo catálogo de IT. A cláusula 3.2 refere que compras com contrato-quadro dispensam cotações adicionais. A cláusula 1.3 exige indicação de centro de custo com orçamento disponível.
+
+Este pedido está conforme contrato-quadro FC-001, utilizando o catálogo IT, cumprindo as regras sem necessidade de cotações adicionais, e o centro de custo e orçamento foram validados.
+real 33,72
+user 1,59
+sys 0,24
+
+=== f3 ===
+[11/24/26 16:21:11] INFO     Starting MCP server                transport.py:241
+                             'purchasing-tools' with transport                  
+                             'stdio'                                            
+
+run f3: needs_manual
+  A investigação resultou num veredicto incerto apesar de uma tentativa, e como há questões críticas de orçamento e aprovação que não podem ser automaticamente resolvidas, é necessário escalonar para tratamento manual.
+   1. triage               forçado    needs_info
+   2. investigate          supervisor verdict=unclear
+      motivo: Faltam o centro de custo e o valor estimado, por isso é necessário o investigador tentar completar esses campos a partir do ERP antes de perguntar ao utilizador.
+   3. triage               forçado    ready
+   4. register             forçado    pr_id=10
+   5. investigate          forçado    verdict=unclear
+   6. escalate             supervisor needs_manual
+      motivo: A investigação resultou num veredicto incerto apesar de uma tentativa, e como há questões críticas de orçamento e aprovação que não podem ser automaticamente resolvidas, é necessário escalonar para tratamento manual.
+  investigação: unclear | cláusulas 01-regras-gerais#1.3, 02-escaloes-e-cotacoes#2.2
+    cost_center        ok          O centro de custo CC-LAB-300 está ativo (Laboratório).
+    budget             problem     Orçamento disponível de 800 €, insuficiente para 1445 €.
+    catalog            ok          Monitor 27 polegadas: 5 x 289 € = 1445 €; pedido de 1445 €.
+    framework_contract ok          Contrato-quadro FC-001 (TechNova) em vigor, com 120000 € disponíveis.
+    supplier           ok          Fornecedor TechNova (S01) aprovado.
+    quotes             ok          A política não exige cotações para este pedido.
+    O pedido de 1445 € excede o orçamento disponível de 800 €, exigindo escalonamento para controlo de gestão segundo a cláusula 1.3. A política exige duas cotações e aprovação do responsável para compras entre 1000 € e 5000 € (cláusula 2.2). O pedido tem cotações corretas, mas a aprovação do responsável e escalonamento não estão confirmados.
+  ERP: pedido 10 open, 1445 €, CC-LAB-300
+real 31,73
+user 1,58
+sys 0,23
+
+=== f4 ===
+[11/24/26 16:21:43] INFO     Starting MCP server                transport.py:241
+                             'purchasing-tools' with transport                  
+                             'stdio'                                            
+
+run f4: waiting_user
+  Faltam cotações para o pedido 11: a política exige 2 de fornecedores distintos e há 0 registadas. Regista-as no ERP e retoma o pedido.
+   1. triage               forçado    ready
+   2. register             forçado    pr_id=11
+   3. investigate          forçado    verdict=unclear
+   4. ask_user             supervisor waiting_user
+      motivo: A investigação está incerta e é necessário que o utilizador forneça pelo menos duas cotações de fornecedores distintos para a consultoria, informação que só ele pode fornecer.
+  investigação: unclear | cláusulas 02-escaloes-e-cotacoes#2.2
+    cost_center        ok          O centro de custo CC-TI-100 está ativo (Tecnologias de Informação).
+    budget             ok          Orçamento disponível de 105755 €, suficiente para 3000 €.
+    catalog            warning     O item não foi encontrado no catálogo.
+    framework_contract warning     Não há contrato-quadro em vigor para esta categoria.
+    supplier           not_checked Nenhum fornecedor único identificado pelo catálogo ou pelo contrato.
+    quotes             problem     0 cotações de fornecedores distintos, a política exige 2.
+    Pedido de consultoria de segurança informática no valor de 3000 €; a política exige pelo menos duas cotações para compras entre 1000 € e 5000 € (cláusula 02-escaloes-e-cotacoes#2.2). Faltam informações sobre as cotações, motivo pelo qual o pedido não pode ser concluído sem mais dados.
+  ERP: pedido 11 open, 3000 €, CC-TI-100
+real 15,78
+user 1,53
+sys 0,22
+
