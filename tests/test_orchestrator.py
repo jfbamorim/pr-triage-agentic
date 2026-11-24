@@ -1,3 +1,4 @@
+import pytest
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
@@ -18,7 +19,7 @@ from pr_triage.domain.validation import validate_request
 from pr_triage.erp import Faults, create_demo_erp
 from pr_triage.erp.models import PrState
 from pr_triage.supervisor.agent import Choice, make_decider
-from pr_triage.supervisor.orchestrator import Orchestrator, Specialists
+from pr_triage.supervisor.orchestrator import Orchestrator, Specialists, verify_decision
 from pr_triage.supervisor.state import Move, RunState, RunStatus
 from pr_triage.supervisor.store import RunStore
 from test_tools import FakePolicy
@@ -566,15 +567,31 @@ def test_a_lost_response_on_an_update_does_not_write_the_correction_twice(tmp_pa
     assert [a.action for a in s.erp.get_actions(1)].count("update_pr") == 1
 
 
-def test_the_decision_is_not_taken_when_the_erp_value_differs_from_the_accepted_one(tmp_path):
+@pytest.mark.parametrize("column,value", [
+    ("value_eur", 3500.0), ("cost_center", "CC-FAC-200"), ("quantity", 7), ("item", "outra coisa"),
+    ("category", "it_equipment"), ("urgent", 1),
+])
+def test_the_decision_is_not_taken_when_the_erp_differs_from_the_accepted_request(tmp_path, column, value):
     s = Setup(tmp_path)
     s.start("servico")
     s.erp.add_quote("q1", "ana", 1, "S02", 2800.0)
     s.erp.add_quote("q2", "ana", 1, "S03", 2950.0)
     assert s.orchestrator.resume("run-1").status == RunStatus.WAITING_HUMAN
     with closing(s.erp.connect()) as conn, conn:
-        conn.execute("UPDATE purchase_requests SET value_eur = 3500 WHERE pr_id = 1")
+        conn.execute(f"UPDATE purchase_requests SET {column} = ? WHERE pr_id = 1", (value,))
     s.erp.record_human_approval("h1", head_approval())
+    before = s.erp.get_budget("CC-FAC-200").committed_eur
     state = s.orchestrator.resume("run-1")
     assert state.status == RunStatus.NEEDS_MANUAL
     assert s.erp.get_pr(1).state == PrState.OPEN
+    assert s.erp.get_budget("CC-FAC-200").committed_eur == before
+
+
+def test_verification_after_a_decision_also_catches_a_changed_cost_center(tmp_path):
+    s = Setup(tmp_path)
+    state = s.start("monitores")
+    assert state.status == RunStatus.DONE
+    with closing(s.erp.connect()) as conn, conn:
+        conn.execute("UPDATE purchase_requests SET cost_center = 'CC-FAC-200' WHERE pr_id = 1")
+    problems = verify_decision(s.erp, state)
+    assert any("cost center" in p for p in problems)

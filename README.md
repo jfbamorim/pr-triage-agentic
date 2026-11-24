@@ -83,7 +83,7 @@ Cada aprovação humana tem de ser de outra pessoa que não o proponente, do mes
 
 - **Factos em código, política no modelo.** Na primeira versão o Investigador chamava as tools e escrevia as verificações; falhava de formas diferentes de corrida para corrida (cotações inventadas, contrato não consultado, ids de cláusulas errados). Passei a recolha dos factos para código (`agents/facts.py`) e o modelo ficou só com a política, com uma tool de pesquisa. Com isto, as corridas medidas ficaram entre 15 e 40 s.
 - **Validação em código de cada saída de especialista**, com devolução ao especialista e um número máximo de tentativas: relatório da triagem, parecer do Investigador, email do Comunicador. Cláusulas que o modelo não recuperou, números que não existem nos factos e nomes inventados são rejeitados.
-- **Estado persistido após cada passo** (SQLite) e **retoma com reconciliação**: antes de continuar, o orquestrador lê o ERP, que é a fonte de verdade, e corrige o estado (pedido já registado, decisão já aplicada, email já enviado). Contradições escalam. Os efeitos têm chave de idempotência, por isso nada se duplica. Cada correção aceite de um pedido tem o seu próprio número de revisão, guardado antes de chamar o ERP: repetir tecnicamente a mesma escrita reutiliza-o, uma correção nova (mesmo voltando a um valor anterior) recebe outro. O valor registado no ERP é comparado com o último valor aceite antes e depois da decisão.
+- **Estado persistido após cada passo** (SQLite) e **retoma com reconciliação**: antes de continuar, o orquestrador lê o ERP, que é a fonte de verdade, e corrige o estado (pedido já registado, decisão já aplicada, email já enviado). Contradições escalam. Os efeitos têm chave de idempotência, por isso nada se duplica. Cada correção aceite de um pedido tem o seu próprio número de revisão, guardado antes de chamar o ERP: repetir tecnicamente a mesma escrita reutiliza-o, uma correção nova (mesmo voltando a um valor anterior) recebe outro. A requisição no ERP (item, quantidade, valor, centro de custo, categoria e urgência) é comparada com o último pedido aceite antes e depois da decisão: se alguém a alterar no ERP entretanto, nada é aprovado e o pedido escala.
 - **Efeitos verificados:** depois de aprovar ou rejeitar, uma verificação independente lê o ERP (estado, cláusulas, uma só ação no log).
 - **Memória que pergunta e não decide:** ver abaixo.
 
@@ -156,7 +156,3 @@ data/policies/           documentos de política (cláusulas com ids estáveis)
 docs/execucoes/          corridas reais usadas como evidência
 tests/                   250 testes
 ```
-
-## Uso de assistentes de IA
-
-> A escrever pelo autor.

@@ -354,10 +354,12 @@ class Orchestrator:
 
     def _value_mismatch(self, state: RunState) -> str | None:
         pr = self.erp.get_pr(state.pr_id)
-        accepted = state.registered_request.estimated_value_eur
-        if pr is None or pr.value_eur == accepted:
+        if pr is None:
             return None
-        return f"the ERP holds {pr.value_eur:g} EUR but the last accepted value is {accepted:g} EUR"
+        differences = erp_differences(pr, state.registered_request)
+        if not differences:
+            return None
+        return "the ERP differs from the last accepted request: " + "; ".join(differences)
 
     def _decide(self, state: RunState, move: Move, tool: str, decision: str) -> str:
         mismatch = self._value_mismatch(state)
@@ -484,6 +486,18 @@ class Orchestrator:
         return "decision email sent"
 
 
+def erp_differences(pr, accepted: PurchaseRequest) -> list[str]:
+    pairs = [
+        ("item", pr.item, accepted.item),
+        ("quantity", pr.quantity, accepted.quantity),
+        ("value", pr.value_eur, accepted.estimated_value_eur),
+        ("cost center", pr.cost_center, accepted.cost_center),
+        ("category", pr.category, accepted.category),
+        ("urgent", pr.urgent, accepted.is_urgent),
+    ]
+    return [f"{name}: the ERP holds {held}, accepted {wanted}" for name, held, wanted in pairs if held != wanted]
+
+
 def verify_decision(erp: ErpStore, state: RunState) -> list[str]:
     problems = []
     pr = erp.get_pr(state.pr_id)
@@ -491,9 +505,10 @@ def verify_decision(erp: ErpStore, state: RunState) -> list[str]:
         return ["the purchase request does not exist in the ERP"]
     if pr.state.value != state.decision:
         problems.append(f"the ERP says {pr.state.value}, expected {state.decision}")
-    accepted = state.registered_request
-    if accepted is not None and pr.value_eur != accepted.estimated_value_eur:
-        problems.append(f"the ERP holds {pr.value_eur:g} EUR but the last accepted value is {accepted.estimated_value_eur:g} EUR")
+    if state.registered_request is not None:
+        differences = erp_differences(pr, state.registered_request)
+        if differences:
+            problems.append("the ERP differs from the last accepted request: " + "; ".join(differences))
     if set(pr.cited_clauses) != set(state.investigation.cited_clauses):
         problems.append("the clauses recorded in the ERP differ from the decision")
     tool = "approve_pr" if state.decision == "approved" else "reject_pr"
