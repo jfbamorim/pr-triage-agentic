@@ -1,114 +1,150 @@
-# PR Triage
+# PR Triage Agentic
 
-Triagem de requisições de compra (Purchase Requisitions) para Purchasing / P2P. O utilizador escreve o pedido em texto livre, e a aplicação extrai os dados, valida, consulta a política de compras e devolve um estado com as cláusulas que o justificam.
+Sistema multiagente que recebe pedidos de compra (Purchase Requisitions) em texto livre, investiga-os num ERP simulado, e aprova, rejeita, pergunta ou escala, com os efeitos verificados e as permissões aplicadas em código.
 
-**Princípio:** o LLM lê, extrai e explica. O Python decide. O modelo nunca aprova nada.
+**Princípio: o modelo propõe, o Python decide.** Tudo o que se pode verificar de forma determinística (orçamento, contratos, cotações, escalões, permissões) é código. O modelo só entra onde há interpretação: ler o texto, ler a política, escolher as cláusulas aplicáveis e escrever.
 
-Projeto final do curso *Generative AI: Fundamentos e Aplicação* (EDIT).
+Projeto final do curso *Agentic AI: Da Arquitetura à Implementação* (EDIT, Curso 2). É a evolução do projeto do Curso 1, uma triagem de requisições com RAG, que se mantém como **baseline** na etiqueta `v1-curso1`.
 
 ## Como correr
 
 ```
 uv sync
-cp .env.example .env        # preencher OPENAI_API_KEY
-uv run python scripts/run.py
+cp .env.example .env                       # preencher OPENAI_API_KEY (a chave só existe aqui)
+uv run python scripts/build_index.py       # índice da política (embeddings)
+uv run python scripts/agentic.py init      # ERP de demonstração, dados sintéticos
+uv run pytest -q                           # 250 testes, sem chave e sem rede
 ```
 
-O `run.py` constrói o índice da política na primeira execução e abre a interface em Streamlit. Para testes: `uv run pytest`. Para a avaliação: `uv run python eval/run_eval.py --split dev`.
+Uma corrida (usa o modelo real e o servidor MCP, lançado automaticamente por stdio):
 
-## O problema
+```
+uv run python scripts/agentic.py run "Preciso de 2 monitores, 600 euros, centro de custo CC-TI-100" --as ana.silva@exemplo.pt --id demo1
+```
 
-Quem faz compras recebe pedidos incompletos, mal escritos ou fora da política. A aplicação responde a três perguntas:
-
-- O pedido está completo e é legítimo? Se faltam dados, pergunta; se é uma tentativa de manipulação, rejeita.
-- Em que escalão de valor cai? Menos de 1 000 €, de 1 000 a 5 000 €, ou mais de 5 000 € (ação humana).
-- Que cláusulas da política se aplicam, e o que dizem?
-
-## O fluxo
-
-![Fluxo](docs/fluxo.png)
-![Resultado de um pedido](docs/captura_resultado.png)
-![Pergunta de seguimento](docs/captura_pergunta.png)
-
-
-| # | Passo | Quem faz |
-|---|-------|----------|
-| 1 | Verificar o texto (prompt injection) | LLM |
-| 2 | Extrair os dados e juntar com o pedido anterior | LLM |
-| 3 | Validar campos em falta ou inválidos | Python |
-| 4 | Determinar o escalão de valor | Python |
-| 5 | Consultar a política (RAG) | Embeddings + Chroma + Python |
-| 6 | Decidir o estado e a escalação | Python |
-| 7 | Resumo com citações | LLM, validado em Python |
-
-Quando falham dados, o LLM escreve a pergunta de seguimento e o Python confirma que ela menciona cada campo em falta; se não, usa uma pergunta de recurso. Em qualquer falha (resumo inválido, política sem cláusulas relevantes, erro na consulta) o sistema falha para o lado seguro: passa para ação manual, nunca aprova.
-
-## O que aprendi nas aulas e onde está no projeto
-
-| Sessão | Tema | O que fiz | Onde |
-|---|---|---|---|
-| 1 | LLMs e APIs | Responses API com `gpt-4.1-mini`; chave e modelo no `.env`; temperature 0 nas decisões; tokens, latência e custo por chamada | `src/pr_triage/llm/`, `.env.example` |
-| 2 | Prompting e structured outputs | Prompts com papel, tarefa, restrições e formato; saídas validadas com Pydantic; deteção de prompt injection; prompts com versão (`screening-v3`, `extraction-v5`, `summary-v4`, `followup-v1`) | `llm/`, `domain/schemas.py` |
-| 3 | Embeddings e pesquisa semântica | `text-embedding-3-small`, Chroma, cosine similarity, `MIN_SCORE` calibrado com casos (0,52) para dizer "não há evidência" | `src/pr_triage/rag/` |
-| 4 | RAG | Um chunk por cláusula, com id estável; contexto selecionado por escalão, categoria e urgência; citações obrigatórias, com ids validados | `rag/`, `domain/citations.py` |
-| 5 | Medir, comparar e decidir | 50 casos etiquetados, divididos em `dev` e `holdout`; source recall; comparação de versões de prompt nos mesmos casos; tokens e latência por passo | `data/eval/cases.jsonl`, `eval/run_eval.py` |
-| 6 | Conversational RAG e tool calling | A pergunta de seguimento e o pedido anterior fundido com a resposta do utilizador. Não usei tool calling nem agent loop: o fluxo tem passos fixos, e o Python escolhe o caminho | `workflow.py`, `llm/write_followup.py` |
-| 7 | Agentes e FastAPI | Controlo na aplicação, não no modelo: limites e regras em Python, falhas tratadas como dados, trace por chamada, histórico em SQLite. Não usei FastAPI: o `service.py` faz de camada de serviço e a interface é Streamlit | `service.py`, `storage/db.py` |
-
-Requisitos mínimos do projeto: mais de dois passos com LLM (3), saída estruturada validada, comportamento definido quando falta informação, e um conjunto de casos de teste.
-
-## Aprendizagem contínua: medir, mudar, voltar a medir
-
-A sessão 5 diz que uma alteração só conta depois da comparação. Foi assim que o projeto evoluiu: cada alteração foi medida nos mesmos casos.
-
-- **Primeira avaliação (`dev`): 23/31.** Falhas diagnosticadas por passo (extração, retrieval ou resumo) antes de mexer em qualquer coisa.
-- **Depois de várias iterações nos prompts e na recuperação: 31/31.** Uma alteração de cada vez, mantendo o resto igual.
-- **Cinco casos novos de dados em falta** (pergunta de seguimento): `dev` com **36/36**, recall 1,00, perguntas do modelo válidas 7/7.
-- **Estabilidade:** 3 execuções seguidas do `dev`, todas 36/36, com os mesmos tokens de entrada. As decisões são estáveis; só a redação do resumo varia.
-- **Prompt do resumo `v3` → `v4`:** o caso `amend-manutencao-urgente` errava a comparação de limites em 2 de 3 execuções com a `v3`, e em 0 de 5 com a `v4`.
-- **`holdout`: 14/14.** Aviso honesto: este conjunto já tinha sido visto uma vez, quando tinha dado 10/14 numa versão inicial. Por isso mostra que os prompts congelados generalizam para estes 14 casos, mas não é uma validação cega.
-
-Custo: cerca de 0,001 $ por caso, 2 a 3 chamadas ao LLM por pedido (3 se faltarem dados). Estimativa feita com os preços configurados em `PRICES_PER_MILLION`, em `eval/run_eval.py`.
-
-## Casos de teste
-
-- **Avaliação (50 casos):** pedidos completos, dados em falta, dados inválidos, prompt injection (e pedidos legítimos que parecem injection), cláusulas com e sem cobertura, emendas à política e casos ambíguos. 36 em `dev` e 14 em `holdout`.
-- **Testes (47):** validação, escalões (999,99 / 1000 / 5000 / 5000,01), citações, fusão de pedidos, pergunta de seguimento, base de dados e o fluxo completo com o LLM substituído por respostas fixas.
-
-## Comportamento seguro
-
-| Situação | Resultado |
+| Comando | O que faz |
 |---|---|
-| Tentativa de manipulação | Rejeitado, nada é gravado |
-| Faltam dados | `needs_info`, com pergunta |
-| Dados inválidos (quantidade ou valor ≤ 0) | Rejeitado |
-| Mais de 5 000 € | Ação manual |
-| Política sem cláusula relevante, ou erro na consulta | Ação manual |
-| Resumo com citação inventada | Sem resumo; a decisão mantém-se |
+| `run "<texto>" --as <email> --id <id>` | Inicia uma corrida |
+| `reply <id> "<texto>"` | Responde a uma pergunta do sistema |
+| `quote <id> <fornecedor> <valor>` | Regista uma cotação no ERP |
+| `approve <id> [--reject]` | Regista a decisão do aprovador humano (acima de 5 000 €) |
+| `resume <id>` | Retoma uma corrida pausada ou interrompida |
+| `show <id>` | Mostra o estado, os passos e o pedido no ERP |
+| `memory list \| correct \| forget <email>` | Gere a memória de um requerente |
+| `--no-mcp` (antes do comando) | Chama as tools diretamente, sem MCP |
 
-## Limitações conhecidas
+O servidor MCP também corre à parte (`uv run python -m pr_triage.toolserver --erp state/erp.db`), para qualquer cliente MCP se ligar às mesmas tools. A interface (`uv run python scripts/run.py`, Streamlit) é atualizada para o fluxo agêntico: *a completar quando estiver feita*.
 
-- A validação das citações confirma que o id existe, não que a frase está de acordo com a cláusula. A fidelidade do resumo foi conferida à mão. Exemplo observado: em embalagens de 1 000 €, o resumo disse que a cláusula 2.2 "é substituída pela 8.2", quando a 8.2 só altera a 5.6.
-- 50 casos dão uma indicação, não uma garantia. O `holdout` é pequeno e já foi visto uma vez.
-- Os pedidos suspeitos não ficam registados e não há contador de tentativas por sessão.
-- Não implementei pesquisa híbrida (lexical + semântica) nem uma comparação com um baseline sem RAG.
+## Arquitetura
+
+```mermaid
+flowchart LR
+    U[Utilizador] --> S{Supervisor}
+    S -->|escolhe entre jogadas permitidas| T[Triagem<br/>workflow do Curso 1]
+    S --> I[Investigador<br/>política]
+    S --> C[Comunicador<br/>emails]
+    F[Factos do ERP<br/>código] --> I
+    T & I & C -->|saída validada em código| O[Orquestrador]
+    O -->|tools| M[(Servidor MCP)]
+    M --> E[(ERP simulado)]
+    O --> R[(Estado das corridas)]
+    O --> Y[(Memória)]
+    A[Autorização<br/>código] -.-> M
+    H[Aprovador humano] -->|aprovação registada| E
+```
+
+| Papel | O que faz | Quem decide |
+|---|---|---|
+| **Supervisor** | Escolhe a próxima jogada entre as que o código permite. Se só há uma, nem chama o modelo | Código calcula as jogadas, o modelo escolhe |
+| **Triagem** | O workflow do Curso 1: deteta manipulação, extrai e valida dados, determina o escalão, consulta a política | Misto, como no Curso 1 |
+| **Investigador** | Recebe os factos já verificados e pesquisa a política: cláusulas aplicáveis, veredicto, perguntas | Modelo, com saída validada |
+| **Comunicador** | Escreve o email de decisão ou o dossier para o aprovador | Modelo, com validação de números, nomes e cláusulas |
+
+O Supervisor não executa nada: o orquestrador corre os especialistas e as tools, grava o estado depois de cada passo, e só tem as jogadas que a função `allowed_moves` devolve. Se o modelo pedir uma jogada não permitida, a corrida escala.
+
+### Tools e MCP
+14 tools com contrato (entrada em Pydantic, saída num envelope `{ok, data, error{code, retryable}}`): 10 de leitura (`get_person`, `get_cost_center`, `get_budget`, `get_supplier`, `find_framework_contracts`, `search_catalog`, `get_pr`, `get_quotes`, `get_approval_status`, `search_policy`) e 4 de escrita (`register_pr`, `approve_pr`, `reject_pr`, `send_email`). Um servidor MCP (fastmcp, stdio) expõe-nas, e **todas as chamadas das corridas passam por ele**. As escritas levam um `run_id` e são idempotentes. A autorização está dentro das tools, por isso é aplicada seja quem for o cliente.
+
+## Políticas e permissões
+
+| Valor | Quem decide |
+|---|---|
+| Menos de 1 000 € | O agente aprova, se não houver bloqueios |
+| 1 000 a 5 000 € | O agente aprova se as cláusulas permitirem, e rejeita se bloquearem. Exige cotações de fornecedores distintos, salvo contrato-quadro em vigor (2 cotações, 1 se urgente) |
+| Mais de 5 000 € | O agente não decide. Envia o dossier ao aprovador, e só avança com uma aprovação humana válida |
+
+A aprovação humana tem de ser de outra pessoa que não o proponente, do mesmo pedido e da mesma decisão, dentro do prazo e sem o valor ter subido. É revalidada sempre que a corrida é retomada. A triagem a recusar manipulação, e um escalão incoerente com o valor, travam qualquer decisão.
+
+## Decisões de desenho
+
+- **Factos em código, política no modelo.** Na primeira versão o Investigador chamava as tools e escrevia as verificações; falhava de formas diferentes de corrida para corrida (cotações inventadas, contrato não consultado, ids de cláusulas errados). Passei a recolha dos factos para código (`agents/facts.py`) e o modelo ficou só com a política, com uma tool de pesquisa. Com isto, as corridas medidas ficaram entre 15 e 40 s.
+- **Validação em código de cada saída de especialista**, com devolução ao especialista e um número máximo de tentativas: relatório da triagem, parecer do Investigador, email do Comunicador. Cláusulas que o modelo não recuperou, números que não existem nos factos e nomes inventados são rejeitados.
+- **Estado persistido após cada passo** (SQLite) e **retoma com reconciliação**: antes de continuar, o orquestrador lê o ERP, que é a fonte de verdade, e corrige o estado (pedido já registado, decisão já aplicada, email já enviado). Contradições escalam. Os efeitos têm chave de idempotência, por isso nada se duplica.
+- **Efeitos verificados:** depois de aprovar ou rejeitar, uma verificação independente lê o ERP (estado, cláusulas, uma só ação no log).
+- **Memória que pergunta e não decide:** ver abaixo.
+
+### Memória
+Guarda uma só coisa, por requerente: o centro de custo que usou e viu aprovado, quando difere do que o ERP lhe atribui. Só o código escreve, no fim de uma corrida aprovada e verificada, e só em formato fixo (um texto livre seria uma porta para injeção persistente).
+- **Origem:** corrida, pedido, fonte e data de cada entrada.
+- **Validade:** 90 dias, e revalidada no ERP a cada uso (centro de custo inexistente ou inativo invalida a entrada).
+- **Correção:** uma entrada nova substitui a anterior e o histórico fica (`memory correct`, `memory forget`). Quando o ERP contradiz a memória, ganha o ERP.
+- **Isolamento:** a leitura está presa ao requerente da corrida; a memória de um nunca aparece a outro.
+- **Uso:** só quando o ERP não tem resposta, e nunca é aplicada sozinha: o sistema sugere ("Da última vez usaste CC-X…") e o utilizador confirma.
+
+## Falhas controladas
+
+| Falha | Como é simulada | O que acontece |
+|---|---|---|
+| Dados em falta | Pedido incompleto | Completa pelo ERP, ou pergunta ao utilizador |
+| Orçamento insuficiente, centro de custo inativo | Dados do ERP | Pergunta ao utilizador; o `approve` é recusado pela tool se for tentado |
+| Cotações em falta | Pedido de 1 000–5 000 € sem cotações | Pausa a pedir cotações; retoma depois de registadas |
+| Acima do limite do agente | Pedido de mais de 5 000 € | Dossier ao aprovador e pausa; sem aprovação válida nada é executado |
+| Saída inválida de um especialista | Modelo de teste que responde mal | Devolvida ao especialista, com um máximo de tentativas; depois escala |
+| Modelo ou ERP indisponível | `Faults` no ERP, erro 503 do modelo | Falha com `retryable`; o Supervisor repete até ao limite e escala |
+| Resposta perdida depois de o efeito acontecer | `drop_response` no ERP | A repetição devolve o resultado original, sem duplicar |
+| Servidor MCP em baixo | Ligação fechada | `mcp_unavailable` (retryable) |
+| Processo interrompido a meio | Teste que interrompe o processo logo após o efeito | `resume` reconcilia com o ERP e continua, sem duplicar |
+| Aprovação humana expirada na interrupção | Relógio avançado | Recusada em código; a corrida escala |
+| Tentativa de manipulação no texto | Texto com instruções | Recusada pela triagem; nada é gravado |
+
+## Baseline e versões
+
+| Versão | Etiqueta | O que faz |
+|---|---|---|
+| Curso 1 | `v1-curso1` | Workflow de triagem com RAG, sem ERP, sem agentes e sem efeitos |
+| Curso 2 | `v2-agentes` e seguintes | Agentes, tools por MCP, ERP, retoma, memória |
+
+O baseline só consegue dizer "pronto", "faltam dados", "rejeitado" ou "ação manual", sobre o texto. Não consulta orçamentos, contratos, cotações nem fornecedores, e não executa nada. As corridas reais que guiaram o desenho, com os problemas que revelaram e as correções, estão em `docs/execucoes/`:
+
+- `2026-11-24-factos-antes-das-correcoes.txt` e `2026-11-24-factos-depois-das-correcoes.txt`: dois defeitos reais (a verificação a escalar um pedido já aprovado, e uma pergunta a ser escalada em vez de feita) e a sua correção.
+- `2026-11-24-memoria.txt` e `2026-11-24-memoria-pergunta.txt`: ciclo completo da memória, com sugestão, confirmação e aprovação.
+
+> A completar: avaliação comparativa nos mesmos casos (baseline contra versões).
+
+## Limitações
+
+- O texto livre do modelo (resumo da investigação, corpo do email) pode contradizer os factos. As verificações e o veredicto são os que decidem, e os emails passam por validação de números, nomes e cláusulas, mas uma afirmação falsa com nomes legítimos pode passar.
+- A variabilidade do modelo continua: os validadores com tentativas adicionais limitam-na, não a eliminam. Quando falha, o sistema falha para o lado seguro (pergunta ou escala), nunca para o de executar.
+- A triagem do Curso 1 exige a quantidade nos serviços, e não encontra evidência de política para pedidos de consultoria (o Investigador compensa pesquisando a política por si). Mantive-a como estava, para o baseline ser comparável.
+- A cláusula 8.1 (limiar jurídico de 4 000 € a partir de setembro de 2026) é aplicada pelo modelo na interpretação, não por regra em código.
+- O ERP, os aprovadores e as aprovações são simulados.
+- Não testei injeção de instruções nos dados devolvidos pelas tools (só no texto do pedido).
 
 ## Estrutura
 
 ```
-app/streamlit_app.py     interface
-scripts/                 run.py, build_index.py
+app/                     interface (Streamlit)
+scripts/                 run.py, build_index.py, agentic.py (CLI)
 src/pr_triage/
-  workflow.py            os 7 passos
-  service.py             camada de serviço (pedidos e histórico)
-  domain/                schemas, validação, escalões, estados, citações
-  llm/                   chamadas ao modelo e prompts versionados
-  rag/                   índice e recuperação
-  storage/db.py          SQLite
-data/policies/           8 documentos, 47 cláusulas
-data/eval/cases.jsonl    casos de avaliação
-eval/run_eval.py         avaliação e métricas
-tests/
+  workflow.py, rag/, llm/, domain/    triagem do Curso 1
+  erp/                   ERP simulado (SQLite), dados sintéticos e falhas
+  authz.py               autorização em código
+  tools/                 contratos, envelope e tools de leitura e escrita
+  toolserver/            servidor e cliente MCP
+  agents/                triagem, investigador (e factos), comunicador
+  supervisor/            estado, jogadas permitidas, orquestrador, reconciliação
+  memory/                memória por requerente
+data/policies/           documentos de política (cláusulas com ids estáveis)
+docs/execucoes/          corridas reais usadas como evidência
+tests/                   250 testes
 ```
-
-Cada pedido (exceto os suspeitos) fica em `pr_triage.db` (SQLite, ignorado pelo Git), com o resultado completo em JSON: evidência, resumo, pergunta e, por chamada, a versão do prompt e os tokens.
