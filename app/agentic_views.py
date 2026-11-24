@@ -1,6 +1,7 @@
 import html
 import re
 
+from pr_triage.domain.band import approver_role
 from pr_triage.domain.labels import format_eur
 from pr_triage.erp import ErpStore
 from pr_triage.supervisor.state import Move, RunState, RunStatus
@@ -114,7 +115,7 @@ def translate(message: str | None) -> str:
         verdict = "aprovado" if m.group(2) == "approved" else "rejeitado"
         return f"Pedido nº {m.group(1)} {verdict}. O requerente foi notificado."
     if m := re.fullmatch(r"Request (\d+) is waiting for a human approval \((.*)\)\.", message):
-        names = {"director": "direção", "purchasing": "Compras"}
+        names = {"director": "direção", "purchasing": "Compras", "department_head": "chefia"}
         who = " e ".join(names[r.strip()] for r in m.group(2).split(","))
         return f"O pedido nº {m.group(1)} excede a autonomia do agente e aguarda: {who}."
     if m := re.fullmatch(r"Request (\d+) was referred to management control.*", message):
@@ -297,9 +298,12 @@ def assistant_message(state: RunState, erp: ErpStore) -> str:
             f"**{who}**, do controlo de gestão, como a política prevê."
         )
     if status == RunStatus.WAITING_HUMAN:
-        approvers = erp.find_people_by_role("director")
+        value = state.request.estimated_value_eur
+        role = approver_role(value)
+        approvers = erp.find_people_by_role(role)
         who = approvers[0].name if approvers else "o aprovador"
-        return f"O pedido nº {state.pr_id} ({format_eur(state.request.estimated_value_eur)}) está acima do que posso aprovar sozinho. Enviei o dossiê a **{who}** e fico a aguardar a decisão."
+        reason = "está acima do que posso aprovar sozinho" if role == "director" else "precisa da aprovação da chefia"
+        return f"O pedido nº {state.pr_id} ({format_eur(value)}) {reason}. Enviei o dossiê a **{who}** e fico a aguardar a decisão."
     if status == RunStatus.REFUSED:
         return "Não posso tratar este pedido. " + translate(state.outcome_message)
     return "Não consegui concluir sozinho. " + translate(state.outcome_message)

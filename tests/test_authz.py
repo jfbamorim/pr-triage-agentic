@@ -55,8 +55,37 @@ def test_below_first_threshold_agent_does_not_reject():
     assert authorize(Action.REJECT_PR, ctx(500)).code == "nothing_to_reject"
 
 
-def test_middle_band_approves_when_policy_permits():
-    assert authorize(Action.APPROVE_PR, ctx(3000)).code == "policy_permits"
+def head(action: Action = Action.APPROVE_PR, **overrides) -> HumanApproval:
+    data = dict(approver="joao", role="department_head", approved_value_eur=5000)
+    data.update(overrides)
+    return approval(action, **data)
+
+
+def test_middle_band_approval_waits_for_the_department_head():
+    assert authorize(Action.APPROVE_PR, ctx(3000)).code == "human_approval_required"
+
+
+def test_middle_band_approves_with_the_department_head_and_no_purchasing_validation():
+    verdict = authorize(Action.APPROVE_PR, ctx(3000, approval=head()))
+    assert verdict.allowed and verdict.code == "human_approved"
+
+
+def test_middle_band_refuses_the_wrong_person_or_a_stale_approval():
+    assert authorize(Action.APPROVE_PR, ctx(3000, approval=approval(approved_value_eur=5000))).code == "wrong_role"
+    assert authorize(Action.APPROVE_PR, ctx(3000, approval=head(), proposed_by="joao")).code == "same_person"
+    expired = head(expires_at=NOW - timedelta(minutes=1))
+    assert authorize(Action.APPROVE_PR, ctx(3000, approval=expired)).code == "approval_expired"
+    assert authorize(Action.APPROVE_PR, ctx(4000, approval=head(approved_value_eur=3000))).code == "value_changed"
+
+
+def test_middle_band_approval_still_needs_a_permitting_verdict():
+    verdict = authorize(Action.APPROVE_PR, ctx(3000, policy_verdict=PolicyVerdict.BLOCKS, approval=head()))
+    assert verdict.code == "policy_unclear"
+
+
+def test_middle_band_department_head_can_reject_even_when_the_policy_permits():
+    assert authorize(Action.REJECT_PR, ctx(3000, approval=head(Action.REJECT_PR))).allowed
+    assert authorize(Action.REJECT_PR, ctx(3000)).code == "policy_unclear"
 
 
 def test_middle_band_rejects_when_policy_blocks():
@@ -167,7 +196,9 @@ def test_missing_policy_evidence_goes_to_manual_action():
 
 def test_dossier_only_above_limit():
     assert authorize(Action.SEND_DOSSIER_EMAIL, ctx(14000)).allowed
-    assert authorize(Action.SEND_DOSSIER_EMAIL, ctx(3000)).code == "no_dossier"
+    assert authorize(Action.SEND_DOSSIER_EMAIL, ctx(3000)).allowed
+    assert authorize(Action.SEND_DOSSIER_EMAIL, ctx(3000, cited_clauses=[])).code == "no_clause"
+    assert authorize(Action.SEND_DOSSIER_EMAIL, ctx(500)).code == "no_dossier"
 
 
 def test_decision_email_requires_an_executed_decision():

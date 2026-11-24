@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pr_triage.agents.triage import TriageOutcome
 from pr_triage.authz import Action, AuthContext, HumanApproval, PolicyVerdict, authorize
-from pr_triage.domain.band import Band, determine_band
+from pr_triage.domain.band import Band, approver_role, determine_band
 from pr_triage.domain.status import Status
 from pr_triage.supervisor.state import TERMINAL, Move, RunState, RunStatus
 
@@ -72,12 +72,13 @@ def _decision_moves(
         return [] if state.referred else [Move.REFER_CONTROLLING]
     if quotes_short(state):
         return [Move.ASK_USER]
-    if band == Band.HUMAN_ACTION:
+    if band == Band.HUMAN_ACTION or (band == Band.POLICY_TO_BE_VERIFIED and verdict == PolicyVerdict.PERMITS):
         if not state.dossier_sent:
             if _allowed(Action.SEND_DOSSIER_EMAIL, state, approval, now):
                 return [Move.SEND_DOSSIER]
             return [Move.ESCALATE]
-        if approval is None or (approval.decision == Action.APPROVE_PR and validation is None):
+        needs_validation = band == Band.HUMAN_ACTION and approval is not None and approval.decision == Action.APPROVE_PR
+        if approval is None or (needs_validation and validation is None):
             return []
         action = approval.decision
         move = Move.APPROVE if action == Action.APPROVE_PR else Move.REJECT
@@ -126,6 +127,8 @@ def allowed_moves(
 
 
 def pending_roles(state: RunState, approval: HumanApproval | None, validation: HumanApproval | None) -> list[str]:
+    if approver_role(state.request.estimated_value_eur) == "department_head":
+        return ["department_head"] if approval is None else []
     if approval is None:
         return ["director", "purchasing"] if validation is None else ["director"]
     if approval.decision == Action.APPROVE_PR and validation is None:

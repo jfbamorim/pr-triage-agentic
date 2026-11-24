@@ -85,6 +85,12 @@ def human(pr_id, action=Action.APPROVE_PR, value=14000.0, role="director", appro
     )
 
 
+def head_approves(ctx, pr_id, action=Action.APPROVE_PR, value=5000.0):
+    ctx.erp.record_human_approval(
+        f"head-{pr_id}-{action.value}", human(pr_id, action, value, "department_head", "joao.ferreira@exemplo.pt")
+    )
+
+
 def test_every_tool_has_a_unique_name_and_a_contract():
     names = [tool.name for tool in TOOLS]
     assert len(names) == len(set(names))
@@ -167,6 +173,9 @@ def test_middle_band_needs_a_real_clause_and_a_permitting_verdict(tmp_path):
     blocked = decide(ctx, "approve_pr", pr_id, "blocks", ["02-escaloes-e-cotacoes#2.1"])
     assert blocked.error.detail == "policy_unclear"
     assert ctx.erp.get_pr(pr_id).state == PrState.OPEN
+    waiting = decide(ctx, "approve_pr", pr_id, clauses=["02-escaloes-e-cotacoes#2.1"])
+    assert waiting.error.detail == "human_approval_required"
+    head_approves(ctx, pr_id)
     ok = decide(ctx, "approve_pr", pr_id, clauses=["02-escaloes-e-cotacoes#2.1"])
     assert ok.ok
     assert ctx.erp.get_pr(pr_id).cited_clauses == ["02-escaloes-e-cotacoes#2.1"]
@@ -194,7 +203,7 @@ def test_above_the_limit_needs_a_human_approval_on_record(tmp_path):
 
 def update_args(pr_id, **overrides):
     values = dict(pr_id=pr_id, requester_email="ana.silva@exemplo.pt", item="monitores", quantity=2,
-                  value_eur=700.0, cost_center="CC-TI-100", category="it_equipment")
+                  value_eur=700.0, cost_center="CC-TI-100", category="it_equipment", revision=1)
     values.update(overrides)
     return values
 
@@ -204,10 +213,10 @@ def test_an_open_requisition_can_be_updated_but_not_by_someone_else_nor_after_a_
     pr_id = register(ctx, 800)
     assert call_tool(ctx, "update_pr", update_args(pr_id)).ok
     assert ctx.erp.get_pr(pr_id).value_eur == 700.0
-    other = call_tool(ctx, "update_pr", update_args(pr_id, requester_email="rui.costa@exemplo.pt", value_eur=10))
+    other = call_tool(ctx, "update_pr", update_args(pr_id, requester_email="rui.costa@exemplo.pt", value_eur=10, revision=2))
     assert other.error.code == "not_requester" or other.error.detail == "not_requester"
     assert decide(ctx, "approve_pr", pr_id, clauses=["02-escaloes-e-cotacoes#2.1"]).ok
-    late = call_tool(ctx, "update_pr", update_args(pr_id, value_eur=100.0))
+    late = call_tool(ctx, "update_pr", update_args(pr_id, value_eur=100.0, revision=3))
     assert not late.ok and ctx.erp.get_pr(pr_id).value_eur == 700.0
 
 
@@ -234,6 +243,7 @@ def test_second_decision_conflicts(tmp_path):
     ctx = make(tmp_path)
     pr_id = register(ctx, 3000)
     clauses = ["02-escaloes-e-cotacoes#2.1"]
+    head_approves(ctx, pr_id)
     assert decide(ctx, "approve_pr", pr_id, clauses=clauses).ok
     result = decide(ctx, "reject_pr", pr_id, "blocks", clauses)
     assert result.error.code == "conflict"
@@ -265,6 +275,7 @@ def test_decision_email_only_goes_to_the_requester(tmp_path):
 def test_decision_email_uses_the_clauses_recorded_in_the_erp(tmp_path):
     ctx = make(tmp_path)
     pr_id = register(ctx, 3000)
+    head_approves(ctx, pr_id)
     decide(ctx, "approve_pr", pr_id, clauses=["02-escaloes-e-cotacoes#2.1"])
     call_tool(
         ctx, "send_email",
@@ -276,9 +287,17 @@ def test_decision_email_uses_the_clauses_recorded_in_the_erp(tmp_path):
 
 def test_dossier_only_above_the_limit_and_only_to_an_approver(tmp_path):
     ctx = make(tmp_path)
-    small = register(ctx, 3000)
-    mail = dict(pr_id=small, kind="dossier", to="maria.santos@exemplo.pt", subject="Dossier", body="...")
+    tiny = register(ctx, 800)
+    mail = dict(pr_id=tiny, kind="dossier", to="joao.ferreira@exemplo.pt", subject="Dossier", body="...")
     assert call_tool(ctx, "send_email", mail).error.detail == "no_dossier"
+
+    ctx3 = make(tmp_path, run_id="run-3")
+    middle = register(ctx3, 3000)
+    to_head = dict(pr_id=middle, kind="dossier", to="joao.ferreira@exemplo.pt", subject="Dossier", body="...",
+                   cited_clauses=["02-escaloes-e-cotacoes#2.1"])
+    assert call_tool(ctx3, "send_email", to_head).ok
+    to_director = {**to_head, "to": "maria.santos@exemplo.pt"}
+    assert call_tool(ctx3, "send_email", to_director).error.code == "wrong_recipient"
 
     ctx2 = make(tmp_path, run_id="run-2")
     big = register(ctx2, 14000)

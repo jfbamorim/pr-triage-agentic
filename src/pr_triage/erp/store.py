@@ -307,11 +307,12 @@ class ErpStore:
             ).fetchall()
         return [Quote(**dict(row)) for row in rows]
 
-    def _latest_approval(self, pr_id: int, role: str) -> HumanApproval | None:
+    def _latest_approval(self, pr_id: int, roles: tuple[str, ...]) -> HumanApproval | None:
+        marks = ", ".join("?" for _ in roles)
         with closing(self.connect()) as conn:
             row = conn.execute(
-                "SELECT * FROM human_approvals WHERE pr_id = ? AND role = ? ORDER BY id DESC LIMIT 1",
-                (pr_id, role),
+                f"SELECT * FROM human_approvals WHERE pr_id = ? AND role IN ({marks}) ORDER BY id DESC LIMIT 1",
+                (pr_id, *roles),
             ).fetchone()
         if row is None:
             return None
@@ -327,11 +328,11 @@ class ErpStore:
 
     def get_human_approval(self, pr_id: int) -> HumanApproval | None:
         self._enter("get_human_approval")
-        return self._latest_approval(pr_id, "director")
+        return self._latest_approval(pr_id, ("director", "department_head"))
 
     def get_purchasing_validation(self, pr_id: int) -> HumanApproval | None:
         self._enter("get_purchasing_validation")
-        return self._latest_approval(pr_id, "purchasing")
+        return self._latest_approval(pr_id, ("purchasing",))
 
     def get_outbox(self, pr_id: int | None = None) -> list[EmailRecord]:
         self._enter("get_outbox")

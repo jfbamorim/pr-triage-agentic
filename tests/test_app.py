@@ -90,6 +90,9 @@ def test_an_urgent_request_waits_for_the_department_head_justification(app):
     at.text_area[0].set_value("Prazo legal na sexta-feira.").run()
     next(b for b in at.button if b.label == "Justificar urgência").click().run()
     assert not at.exception
+    assert runtime.erp.get_pr(1).state.value == "open"
+    next(b for b in at.button if b.label == "Aprovar").click().run()
+    assert not at.exception
     assert runtime.erp.get_pr(1).state.value == "approved"
 
 

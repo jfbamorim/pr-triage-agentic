@@ -59,6 +59,12 @@ def human(action=Action.APPROVE_PR, approver="maria.santos@exemplo.pt", expires=
     )
 
 
+def head(action=Action.APPROVE_PR, **kw):
+    return human(action, approver="joao.ferreira@exemplo.pt", **kw).model_copy(
+        update={"role": "department_head", "approved_value_eur": 5000.0}
+    )
+
+
 def purchasing(**kw):
     return human(approver="pedro.alves@exemplo.pt", **kw).model_copy(update={"role": "purchasing"})
 
@@ -149,7 +155,7 @@ def test_missing_quotes_pause_the_run_before_any_decision():
 def test_enough_quotes_let_the_run_proceed():
     enough = ready(3000.0)
     enough.investigation.quotes_required, enough.investigation.quotes_found = 2, 2
-    assert moves(enough) == [Move.APPROVE]
+    assert moves(enough) == [Move.SEND_DOSSIER]
 
 
 def test_missing_policy_evidence_in_the_triage_goes_on_to_the_investigator():
@@ -170,9 +176,20 @@ def test_below_the_first_threshold_a_blocking_verdict_cannot_be_rejected_by_the_
 
 
 def test_middle_band_follows_the_verdict_and_needs_a_clause():
-    assert moves(ready(3000.0, pr_id=1)) == [Move.APPROVE]
+    assert moves(ready(3000.0, pr_id=1)) == [Move.SEND_DOSSIER]
     assert moves(ready(3000.0, verdict=PolicyVerdict.BLOCKS, clauses=(T33,), pr_id=1)) == [Move.REJECT]
     assert moves(ready(3000.0, clauses=())) == [Move.ESCALATE]
+
+
+def test_middle_band_waits_for_the_department_head_and_then_executes_their_decision():
+    sent = ready(3000.0, pr_id=1, dossier_sent=True)
+    assert moves(sent) == []
+    assert pending_roles(sent, None, None) == ["department_head"]
+    assert pause_reason(sent, None) == RunStatus.WAITING_HUMAN
+    assert moves(sent, head()) == [Move.APPROVE]
+    assert moves(sent, head(Action.REJECT_PR)) == [Move.REJECT]
+    assert moves(sent, human()) == [Move.ESCALATE]
+    assert pending_roles(sent, head(), None) == []
 
 
 def test_an_unclear_verdict_asks_the_user_when_there_is_a_question():

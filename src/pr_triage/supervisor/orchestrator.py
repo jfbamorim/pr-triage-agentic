@@ -16,6 +16,7 @@ from pr_triage.domain.schemas import Evidence, PurchaseRequest
 from pr_triage.erp import ErpStore, ErpUnavailable
 from pr_triage.supervisor.agent import Choice
 from pr_triage.memory import MemoryStore, MemoryView
+from pr_triage.domain.band import approver_role
 from pr_triage.supervisor.moves import allowed_moves, pause_reason, pending_roles, quotes_short
 from pr_triage.supervisor.reconcile import reconcile
 from pr_triage.supervisor.state import (
@@ -323,11 +324,16 @@ class Orchestrator:
 
     def _do_update_pr(self, state: RunState, choice: Choice) -> str:
         request = state.request
+        if state.update_in_flight != request:
+            state.update_revision += 1
+            state.update_in_flight = request
+            self._save(state)
         result = call_tool(
             self._ctx(state),
             "update_pr",
             dict(
                 pr_id=state.pr_id,
+                revision=state.update_revision,
                 requester_email=state.requester_email,
                 item=request.item,
                 quantity=request.quantity,
@@ -341,9 +347,22 @@ class Orchestrator:
             return self._tool_failed(state, Move.UPDATE_PR, result)
         state.registered_request = request
         state.blocked = None
+        mismatch = self._value_mismatch(state)
+        if mismatch:
+            return self._block(state, Move.UPDATE_PR, [mismatch], False)
         return f"pr_id={state.pr_id} updated"
 
+    def _value_mismatch(self, state: RunState) -> str | None:
+        pr = self.erp.get_pr(state.pr_id)
+        accepted = state.registered_request.estimated_value_eur
+        if pr is None or pr.value_eur == accepted:
+            return None
+        return f"the ERP holds {pr.value_eur:g} EUR but the last accepted value is {accepted:g} EUR"
+
     def _decide(self, state: RunState, move: Move, tool: str, decision: str) -> str:
+        mismatch = self._value_mismatch(state)
+        if mismatch:
+            return self._block(state, move, [mismatch], False)
         inv = state.investigation
         result = call_tool(
             self._ctx(state),
@@ -393,7 +412,7 @@ class Orchestrator:
         return result
 
     def _do_send_dossier(self, state: RunState, choice: Choice) -> str:
-        approvers = self.erp.find_people_by_role("director")
+        approvers = self.erp.find_people_by_role(approver_role(state.request.estimated_value_eur))
         if not approvers:
             return self._block(state, Move.SEND_DOSSIER, ["no approver is registered"], False)
         pr = self.erp.get_pr(state.pr_id)
@@ -472,6 +491,9 @@ def verify_decision(erp: ErpStore, state: RunState) -> list[str]:
         return ["the purchase request does not exist in the ERP"]
     if pr.state.value != state.decision:
         problems.append(f"the ERP says {pr.state.value}, expected {state.decision}")
+    accepted = state.registered_request
+    if accepted is not None and pr.value_eur != accepted.estimated_value_eur:
+        problems.append(f"the ERP holds {pr.value_eur:g} EUR but the last accepted value is {accepted.estimated_value_eur:g} EUR")
     if set(pr.cited_clauses) != set(state.investigation.cited_clauses):
         problems.append("the clauses recorded in the ERP differ from the decision")
     tool = "approve_pr" if state.decision == "approved" else "reject_pr"

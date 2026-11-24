@@ -65,6 +65,8 @@ class RunState(BaseModel):
     investigated_request: PurchaseRequest | None = None
     investigated_pr_id: int | None = None
     registered_request: PurchaseRequest | None = None
+    update_revision: int = 0
+    update_in_flight: PurchaseRequest | None = None
     pr_id: int | None = None
     decision: Literal["approved", "rejected"] | None = None
     decision_verified: bool = False

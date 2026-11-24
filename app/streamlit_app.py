@@ -37,13 +37,13 @@ SCENARIOS = [
     ("Aprovação automática", "ana.silva@exemplo.pt", "Preciso de 2 monitores para a equipa, cerca de 600 euros",
      "Abaixo de 1 000 €: o agente decide sozinho e o efeito é verificado no ERP."),
     ("Contrato-quadro", "ana.silva@exemplo.pt", "Preciso de 5 monitores, total 1445 euros",
-     "Há contrato-quadro em vigor, por isso não são precisas cotações."),
-    ("Cotações em falta", "rui.costa@exemplo.pt", "Preciso de uma consultoria de 3000 euros, 10 dias, centro de custo CC-FAC-200",
-     "Pausa e pede cotações; retoma quando forem registadas."),
+     "Há contrato-quadro em vigor, por isso não são precisas cotações; a chefia aprova."),
+    ("Cotações em falta", "rui.costa@exemplo.pt", "Preciso de 1 consultoria de 2500 euros, 10 dias, âmbito: auditoria aos processos de faturação, aceitação por Rui Costa, centro de custo CC-FAC-200",
+     "Pausa e pede cotações; retoma quando forem registadas e a chefia aprova."),
     ("Acima do limite", "ana.silva@exemplo.pt", "Preciso de 10 portáteis, 14000 euros",
      "Acima de 5 000 €: precisa da aprovação da direção e da validação de Compras."),
-    ("Urgência", "rui.costa@exemplo.pt", "Preciso com urgência de uma consultoria de 2000 euros, 5 dias, centro de custo CC-FAC-200",
-     "Com urgência, uma cotação basta se a chefia justificar por escrito (cláusula 2.4)."),
+    ("Urgência", "rui.costa@exemplo.pt", "Preciso com urgência de 1 consultoria de 2000 euros, 5 dias, âmbito: apoio a uma auditoria legal, aceitação por Rui Costa, centro de custo CC-FAC-200",
+     "Com urgência, uma cotação basta se a chefia justificar por escrito (cláusula 2.4); a chefia aprova."),
     ("Memória", "tiago.lopes@exemplo.pt", "Preciso de 3 monitores, 900 euros",
      "Sem centro de custo: sugere o último usado, com origem e validade."),
     ("Orçamento insuficiente", "sofia.matos@exemplo.pt", "Preciso de 5 monitores, 1445 euros",
@@ -136,7 +136,7 @@ def run_pending(runtime, boxes) -> None:
         current = runtime.store.load(run_id)
         record_human_decision(runtime.erp, current, args["approver"], args["approve"])
         person = runtime.erp.get_person(args["approver"])
-        verdict = ("aprovou" if args["approve"] else "rejeitou") if person.role.value == "director" else "validou"
+        verdict = "validou" if person.role.value == "purchasing" else ("aprovou" if args["approve"] else "rejeitou")
         say(run_id, "approver", f"{person.name} ({ROLE_NAMES[person.role.value]}) {verdict} o pedido nº {current.pr_id}.")
         state = orchestrator.resume(run_id)
         st.session_state.run_id = run_id
@@ -203,7 +203,6 @@ def approvals(runtime) -> None:
     email, role = APPROVERS[who]
     if role == "department_head":
         urgencies(runtime, email)
-        return
     mine = []
     for state in runtime.store.list_recent(30):
         if state.status != RunStatus.WAITING_HUMAN:
@@ -232,14 +231,14 @@ def approvals(runtime) -> None:
                 st.write(dossier.body)
             left, right, _ = st.columns([1, 1, 4])
             left.button(
-                "Aprovar" if role == "director" else "Validar",
+                "Validar" if role == "purchasing" else "Aprovar",
                 key=f"ap-{state.run_id}-{role}",
                 type="primary",
                 on_click=queue,
                 args=("decision",),
                 kwargs={"run_id": state.run_id, "approve": True, "approver": email},
             )
-            if role == "director":
+            if role != "purchasing":
                 right.button(
                     "Rejeitar",
                     key=f"rj-{state.run_id}",

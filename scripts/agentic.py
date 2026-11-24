@@ -83,7 +83,7 @@ def main() -> None:
     approve = sub.add_parser("approve")
     approve.add_argument("run_id")
     approve.add_argument("--reject", action="store_true")
-    approve.add_argument("--as", dest="role", choices=["director", "purchasing"], default="director")
+    approve.add_argument("--as", dest="role", choices=["director", "purchasing", "head"], default="director")
     justify = sub.add_parser("justify", help="justificação escrita de urgência pelo responsável do departamento")
     justify.add_argument("run_id")
     justify.add_argument("text")

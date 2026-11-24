@@ -1,18 +1,15 @@
-import hashlib
-import json
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from pr_triage.authz import Action, AuthContext, PolicyVerdict, authorize
-from pr_triage.domain.band import determine_band
+from pr_triage.domain.band import approver_role, determine_band
 from pr_triage.domain.category import Category
 from pr_triage.domain.status import Status
 from pr_triage.erp.models import PrState
 from pr_triage.tools.context import ToolContext
 from pr_triage.tools.envelope import ToolResult, failure, guarded
 
-DOSSIER_RECIPIENT_ROLES = ("director", "department_head")
 
 
 class RegisterPrIn(BaseModel):
@@ -27,6 +24,7 @@ class RegisterPrIn(BaseModel):
 
 class UpdatePrIn(RegisterPrIn):
     pr_id: int
+    revision: int = Field(ge=1)
 
 
 class DecisionIn(BaseModel):
@@ -86,11 +84,9 @@ def register_pr(ctx: ToolContext, args: RegisterPrIn) -> ToolResult:
 
 
 def update_pr(ctx: ToolContext, args: UpdatePrIn) -> ToolResult:
-    values = args.model_dump(mode="json", exclude={"pr_id"})
-    digest = hashlib.sha1(json.dumps(values, sort_keys=True).encode()).hexdigest()[:8]
     return guarded(
         lambda: ctx.erp.update_pr(
-            f"{ctx.run_id}:update_pr:{args.pr_id}:{digest}",
+            f"{ctx.run_id}:update_pr:{args.pr_id}:{args.revision}",
             ctx.actor,
             args.pr_id,
             args.requester_email,
@@ -161,8 +157,8 @@ def send_email(ctx: ToolContext, args: SendEmailIn) -> ToolResult:
             auth = _auth_context(ctx, pr, cited_clauses=clauses, budget_insufficient=insufficient)
         else:
             person = ctx.erp.get_person(args.to)
-            if person is None or person.role.value not in DOSSIER_RECIPIENT_ROLES:
-                return failure("wrong_recipient", "A dossier goes to an approver.")
+            if person is None or person.role.value != approver_role(pr.value_eur):
+                return failure("wrong_recipient", "A dossier goes to the approver the value requires.")
             unknown = _unknown_clauses(ctx, args.cited_clauses)
             if unknown:
                 return failure("unknown_clause", f"These clauses do not exist: {unknown}.")

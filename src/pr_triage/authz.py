@@ -61,7 +61,10 @@ def _allow(code: str, reason: str) -> Verdict:
     return Verdict(allowed=True, code=code, reason=reason)
 
 
-def _check_human_approval(action: Action, ctx: AuthContext) -> Verdict:
+ROLE_LABELS = {"director": "direction", "department_head": "department head"}
+
+
+def _check_human_approval(action: Action, ctx: AuthContext, role: str) -> Verdict:
     approval = ctx.approval
     if approval is None:
         return _deny("human_approval_required", "Above the agent limit: no human approval on record.")
@@ -75,9 +78,9 @@ def _check_human_approval(action: Action, ctx: AuthContext) -> Verdict:
         return _deny("approval_expired", "The human approval has expired.")
     if ctx.value_eur is None or ctx.value_eur > approval.approved_value_eur:
         return _deny("value_changed", "The value is higher than the one approved.")
-    if approval.role != "director":
-        return _deny("wrong_role", "The approval must come from the direction.")
-    if action == Action.APPROVE_PR:
+    if approval.role != role:
+        return _deny("wrong_role", f"The approval must come from the {ROLE_LABELS[role]}.")
+    if action == Action.APPROVE_PR and role == "director":
         return _check_validation(approval, ctx)
     return _allow("human_approved", f"Decided by {approval.approver}.")
 
@@ -109,17 +112,21 @@ def _check_decision(action: Action, ctx: AuthContext) -> Verdict:
     if ctx.escalation in (EscalationReason.NO_POLICY_EVIDENCE, EscalationReason.RETRIEVAL_ERROR):
         return _deny("manual_action", "No usable policy evidence: a human must handle it.")
     if ctx.band == Band.HUMAN_ACTION:
-        return _check_human_approval(action, ctx)
+        return _check_human_approval(action, ctx, "director")
     if ctx.band == Band.NO_BLOCKERS:
         if action == Action.APPROVE_PR:
             return _allow("no_blockers", "Below the first threshold with no blockers.")
         return _deny("nothing_to_reject", "A request without blockers is not rejected by the agent.")
     if not ctx.cited_clauses:
         return _deny("no_clause", "A decision in this band must cite a policy clause.")
-    if action == Action.APPROVE_PR and ctx.policy_verdict == PolicyVerdict.PERMITS:
-        return _allow("policy_permits", "The cited clauses permit it.")
-    if action == Action.REJECT_PR and ctx.policy_verdict == PolicyVerdict.BLOCKS:
+    if action == Action.APPROVE_PR:
+        if ctx.policy_verdict != PolicyVerdict.PERMITS:
+            return _deny("policy_unclear", "The policy verdict does not support this action.")
+        return _check_human_approval(action, ctx, "department_head")
+    if ctx.policy_verdict == PolicyVerdict.BLOCKS:
         return _allow("policy_blocks", "The cited clauses do not permit it.")
+    if ctx.approval is not None and ctx.approval.decision == Action.REJECT_PR:
+        return _check_human_approval(action, ctx, "department_head")
     return _deny("policy_unclear", "The policy verdict does not support this action.")
 
 
@@ -131,8 +138,10 @@ def authorize(action: Action, ctx: AuthContext) -> Verdict:
             return _deny("no_referral", "A referral is only for a valid request whose budget is insufficient.")
         return _allow("referral", "Management control receives the request.")
     if action == Action.SEND_DOSSIER_EMAIL:
-        if ctx.band != Band.HUMAN_ACTION or ctx.status != Status.VALID:
-            return _deny("no_dossier", "A dossier is only for a valid request above the agent limit.")
+        if ctx.band == Band.NO_BLOCKERS or ctx.status != Status.VALID:
+            return _deny("no_dossier", "A dossier is only for a valid request that needs a human approval.")
+        if not ctx.cited_clauses and ctx.band == Band.POLICY_TO_BE_VERIFIED:
+            return _deny("no_clause", "The dossier must cite the clauses behind the proposal.")
         return _allow("dossier", "The approver receives the dossier.")
     if ctx.executed_decision is None:
         return _deny("nothing_executed", "The decision email follows an executed decision.")

@@ -13,3 +13,7 @@ def determine_band(estimated_value_eur: float) -> Band:
     if estimated_value_eur <= 5000:
         return Band.POLICY_TO_BE_VERIFIED
     return Band.HUMAN_ACTION
+
+
+def approver_role(value_eur: float) -> str:
+    return "director" if determine_band(value_eur) == Band.HUMAN_ACTION else "department_head"

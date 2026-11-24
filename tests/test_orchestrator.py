@@ -1,3 +1,4 @@
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
 from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -196,6 +197,10 @@ class Setup:
         return self.orchestrator.start(text, email, run_id="run-1")
 
 
+def head_approval(pr_id=1, action=Action.APPROVE_PR, value=5000.0):
+    return approval(pr_id, action, value).model_copy(update={"approver": "joao.ferreira@exemplo.pt", "role": "department_head"})
+
+
 def approval(pr_id=1, action=Action.APPROVE_PR, value=14000.0):
     return HumanApproval(request_id=pr_id, approver="maria.santos@exemplo.pt", decision=action,
                          approved_value_eur=value, granted_at=NOW - timedelta(hours=1),
@@ -387,8 +392,35 @@ def test_missing_quotes_pause_the_run_and_adding_them_lets_it_finish(tmp_path):
     still = s.orchestrator.resume("run-1")
     assert still.status == RunStatus.WAITING_USER
     s.erp.add_quote("q2", "ana", 1, "S03", 2950.0)
+    waiting = s.orchestrator.resume("run-1")
+    assert waiting.status == RunStatus.WAITING_HUMAN and s.erp.get_pr(1).state == PrState.OPEN
+    assert [(m.kind, m.to_addr) for m in s.erp.get_outbox(1)] == [("dossier", "joao.ferreira@exemplo.pt")]
+    s.erp.record_human_approval("h1", head_approval())
     done = s.orchestrator.resume("run-1")
     assert done.status == RunStatus.DONE and s.erp.get_pr(1).state == PrState.APPROVED
+    assert "João Ferreira" in s.writer.briefs[-1].decided_by
+
+
+def test_the_direction_cannot_stand_in_for_the_department_head(tmp_path):
+    s = Setup(tmp_path)
+    s.start("servico")
+    s.erp.add_quote("q1", "ana", 1, "S02", 2800.0)
+    s.erp.add_quote("q2", "ana", 1, "S03", 2950.0)
+    assert s.orchestrator.resume("run-1").status == RunStatus.WAITING_HUMAN
+    s.erp.record_human_approval("h1", approval(value=5000.0))
+    state = s.orchestrator.resume("run-1")
+    assert state.status == RunStatus.NEEDS_MANUAL and s.erp.get_pr(1).state == PrState.OPEN
+
+
+def test_the_department_head_can_reject_a_request_the_policy_permits(tmp_path):
+    s = Setup(tmp_path)
+    s.start("servico")
+    s.erp.add_quote("q1", "ana", 1, "S02", 2800.0)
+    s.erp.add_quote("q2", "ana", 1, "S03", 2950.0)
+    s.orchestrator.resume("run-1")
+    s.erp.record_human_approval("h1", head_approval(action=Action.REJECT_PR))
+    done = s.orchestrator.resume("run-1")
+    assert done.status == RunStatus.DONE and s.erp.get_pr(1).state == PrState.REJECTED
 
 
 def test_quotes_from_the_same_supplier_do_not_unblock_the_run(tmp_path):
@@ -489,6 +521,9 @@ def test_an_urgent_request_needs_the_department_head_justification_to_use_one_qu
     s.erp.add_quote("q1", "ana", 1, "S02", 1900.0)
     assert s.orchestrator.resume("run-1").status == RunStatus.WAITING_USER
     s.erp.record_urgency_justification("j1", "joao.ferreira@exemplo.pt", 1, "Prazo legal na sexta-feira.")
+    waiting = s.orchestrator.resume("run-1")
+    assert waiting.status == RunStatus.WAITING_HUMAN and s.erp.get_pr(1).state == PrState.OPEN
+    s.erp.record_human_approval("h1", head_approval())
     done = s.orchestrator.resume("run-1")
     assert done.status == RunStatus.DONE and s.erp.get_pr(1).state == PrState.APPROVED
 
@@ -502,3 +537,44 @@ def test_a_changed_request_after_registration_updates_the_open_requisition_inste
     assert state.status == RunStatus.WAITING_USER
     assert s.erp.get_pr(1).value_eur == 2500.0 and s.erp.get_pr(1).state == PrState.OPEN
     assert [a.action for a in s.erp.get_actions()].count("register_pr") == 1
+
+
+def test_going_back_to_an_earlier_value_is_written_to_the_erp_each_time(tmp_path):
+    s = Setup(tmp_path)
+    s.start("servico")
+    for text in ("servico2", "servico", "servico2"):
+        s.orchestrator.reply("run-1", text)
+    s.erp.add_quote("q1", "ana", 1, "S02", 2300.0)
+    s.erp.add_quote("q2", "ana", 1, "S03", 2450.0)
+    assert s.orchestrator.resume("run-1").status == RunStatus.WAITING_HUMAN
+    s.erp.record_human_approval("h1", head_approval(value=2500.0))
+    done = s.orchestrator.resume("run-1")
+    assert done.status == RunStatus.DONE
+    assert s.erp.get_pr(1).value_eur == 2500.0
+    assert done.registered_request.estimated_value_eur == 2500.0
+    assert [a.action for a in s.erp.get_actions(1)].count("update_pr") == 3
+    assert [a.action for a in s.erp.get_actions()].count("register_pr") == 1
+    assert s.erp.get_budget("CC-TI-100").committed_eur == 38000.0 + 2500.0
+
+
+def test_a_lost_response_on_an_update_does_not_write_the_correction_twice(tmp_path):
+    s = Setup(tmp_path, faults=Faults(drop_response={"update_pr": [1]}))
+    s.start("servico")
+    state = s.orchestrator.reply("run-1", "servico2")
+    assert state.blocked is None
+    assert s.erp.get_pr(1).value_eur == 2500.0
+    assert [a.action for a in s.erp.get_actions(1)].count("update_pr") == 1
+
+
+def test_the_decision_is_not_taken_when_the_erp_value_differs_from_the_accepted_one(tmp_path):
+    s = Setup(tmp_path)
+    s.start("servico")
+    s.erp.add_quote("q1", "ana", 1, "S02", 2800.0)
+    s.erp.add_quote("q2", "ana", 1, "S03", 2950.0)
+    assert s.orchestrator.resume("run-1").status == RunStatus.WAITING_HUMAN
+    with closing(s.erp.connect()) as conn, conn:
+        conn.execute("UPDATE purchase_requests SET value_eur = 3500 WHERE pr_id = 1")
+    s.erp.record_human_approval("h1", head_approval())
+    state = s.orchestrator.resume("run-1")
+    assert state.status == RunStatus.NEEDS_MANUAL
+    assert s.erp.get_pr(1).state == PrState.OPEN
