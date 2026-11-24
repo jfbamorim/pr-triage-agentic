@@ -4,7 +4,7 @@ from pr_triage.erp import ErpStore
 from pr_triage.erp.models import PrState
 from pr_triage.supervisor.state import RunState
 
-EMAIL_FLAGS = {"dossier": "dossier_sent", "decision": "decision_email_sent"}
+EMAIL_FLAGS = {"dossier": "dossier_sent", "decision": "decision_email_sent", "referral": "referred"}
 DECISION_ACTIONS = {"approve_pr": "approved", "reject_pr": "rejected"}
 
 

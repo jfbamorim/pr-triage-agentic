@@ -14,12 +14,13 @@ class RunStatus(str, Enum):
     WAITING_USER = "waiting_user"
     WAITING_HUMAN = "waiting_human"
     DONE = "done"
+    REFERRED = "referred"
     NEEDS_MANUAL = "needs_manual"
     REFUSED = "refused"
     FAILED = "failed"
 
 
-TERMINAL = {RunStatus.DONE, RunStatus.NEEDS_MANUAL, RunStatus.REFUSED, RunStatus.FAILED}
+TERMINAL = {RunStatus.DONE, RunStatus.REFERRED, RunStatus.NEEDS_MANUAL, RunStatus.REFUSED, RunStatus.FAILED}
 
 
 class Move(str, Enum):
@@ -28,9 +29,11 @@ class Move(str, Enum):
     ASK_USER = "ask_user"
     REFUSE = "refuse"
     REGISTER = "register"
+    UPDATE_PR = "update_pr"
     APPROVE = "approve"
     REJECT = "reject"
     SEND_DOSSIER = "send_dossier"
+    REFER_CONTROLLING = "refer_controlling"
     VERIFY = "verify"
     SEND_DECISION_EMAIL = "send_decision_email"
     ESCALATE = "escalate"
@@ -67,6 +70,7 @@ class RunState(BaseModel):
     decision_verified: bool = False
     dossier_sent: bool = False
     decision_email_sent: bool = False
+    referred: bool = False
     blocked: Blocked | None = None
     attempts: dict[str, int] = {}
     status: RunStatus = RunStatus.RUNNING

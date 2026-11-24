@@ -17,8 +17,10 @@ AGENT_OF = {
     Move.TRIAGE: "triagem",
     Move.INVESTIGATE: "investigador",
     Move.SEND_DOSSIER: "comunicador",
+    Move.REFER_CONTROLLING: "comunicador",
     Move.SEND_DECISION_EMAIL: "comunicador",
     Move.REGISTER: "erp",
+    Move.UPDATE_PR: "erp",
     Move.APPROVE: "erp",
     Move.REJECT: "erp",
     Move.VERIFY: "erp",
@@ -32,8 +34,10 @@ DOING = {
     Move.TRIAGE: "A interpretar o pedido…",
     Move.INVESTIGATE: "A apurar factos no ERP e a consultar a política…",
     Move.SEND_DOSSIER: "A redigir o dossiê para o aprovador…",
+    Move.REFER_CONTROLLING: "A redigir o encaminhamento para o controlo de gestão…",
     Move.SEND_DECISION_EMAIL: "A redigir o email da decisão…",
     Move.REGISTER: "A registar a requisição no ERP…",
+    Move.UPDATE_PR: "A atualizar a requisição no ERP…",
     Move.APPROVE: "A aprovar no ERP…",
     Move.REJECT: "A rejeitar no ERP…",
     Move.VERIFY: "A confirmar o efeito com uma leitura independente…",
@@ -49,9 +53,11 @@ MOVE_LABELS = {
     Move.ASK_USER: "Pedir informação",
     Move.REFUSE: "Recusar",
     Move.REGISTER: "Registar no ERP",
+    Move.UPDATE_PR: "Atualizar no ERP",
     Move.APPROVE: "Aprovar no ERP",
     Move.REJECT: "Rejeitar no ERP",
     Move.SEND_DOSSIER: "Enviar dossiê",
+    Move.REFER_CONTROLLING: "Encaminhar para o controlo de gestão",
     Move.VERIFY: "Verificar o efeito",
     Move.SEND_DECISION_EMAIL: "Comunicar a decisão",
     Move.ESCALATE: "Escalar",
@@ -72,6 +78,7 @@ STATUS_BANNERS = {
     RunStatus.DONE: ("green", "✓", "Concluído"),
     RunStatus.WAITING_USER: ("amber", "💬", "À espera do requerente"),
     RunStatus.WAITING_HUMAN: ("orange", "⏸", "À espera de aprovação humana"),
+    RunStatus.REFERRED: ("orange", "➜", "Encaminhado para o controlo de gestão"),
     RunStatus.NEEDS_MANUAL: ("red", "⚠", "Encaminhado para tratamento manual"),
     RunStatus.REFUSED: ("red", "✕", "Pedido recusado"),
     RunStatus.FAILED: ("red", "✕", "Falhou"),
@@ -81,6 +88,7 @@ STATUS_LABELS = {
     RunStatus.DONE: "concluído",
     RunStatus.WAITING_USER: "à espera do requerente",
     RunStatus.WAITING_HUMAN: "à espera de aprovação",
+    RunStatus.REFERRED: "encaminhado",
     RunStatus.NEEDS_MANUAL: "tratamento manual",
     RunStatus.REFUSED: "recusado",
     RunStatus.FAILED: "falhou",
@@ -105,8 +113,12 @@ def translate(message: str | None) -> str:
     if m := re.fullmatch(r"Request (\d+) (approved|rejected); the requester was notified\.", message):
         verdict = "aprovado" if m.group(2) == "approved" else "rejeitado"
         return f"Pedido nº {m.group(1)} {verdict}. O requerente foi notificado."
-    if m := re.fullmatch(r"Request (\d+) is waiting for a human approval\.", message):
-        return f"O pedido nº {m.group(1)} excede a autonomia do agente e aguarda aprovação humana."
+    if m := re.fullmatch(r"Request (\d+) is waiting for a human approval \((.*)\)\.", message):
+        names = {"director": "direção", "purchasing": "Compras"}
+        who = " e ".join(names[r.strip()] for r in m.group(2).split(","))
+        return f"O pedido nº {m.group(1)} excede a autonomia do agente e aguarda: {who}."
+    if m := re.fullmatch(r"Request (\d+) was referred to management control.*", message):
+        return f"O pedido nº {m.group(1)} foi encaminhado para o controlo de gestão por falta de orçamento."
     if message.startswith("The ERP is unavailable"):
         return "O ERP está indisponível; nada foi alterado. Retoma mais tarde."
     if message.startswith("No allowed move"):
@@ -142,6 +154,8 @@ def describe(step, state: RunState) -> str:
         return f"Parecer: {VERDICTS[inv.policy_verdict.value]} · {ok}/{len(inv.checks)} verificações ok · cláusulas {clauses(inv.cited_clauses)}"
     if move == Move.REGISTER:
         return f"Requisição nº {state.pr_id} registada"
+    if move == Move.UPDATE_PR:
+        return f"Requisição nº {state.pr_id} atualizada com os novos dados"
     if move == Move.APPROVE:
         return "Aprovada no ERP"
     if move == Move.REJECT:
@@ -150,6 +164,8 @@ def describe(step, state: RunState) -> str:
         return "Efeito confirmado por leitura independente"
     if move == Move.SEND_DOSSIER:
         return "Dossiê enviado ao aprovador"
+    if move == Move.REFER_CONTROLLING:
+        return "Orçamento insuficiente: pedido encaminhado ao controlo de gestão"
     if move == Move.SEND_DECISION_EMAIL:
         return "Decisão comunicada ao requerente"
     if move == Move.ASK_USER:
@@ -272,6 +288,14 @@ def assistant_message(state: RunState, erp: ErpStore) -> str:
         return f"O pedido nº {state.pr_id} foi **{verdict}** e o efeito ficou confirmado no ERP. Enviei-te um email com a decisão."
     if status == RunStatus.WAITING_USER:
         return state.question or "Preciso de mais informação."
+    if status == RunStatus.REFERRED:
+        controllers = erp.find_people_by_role("controlling")
+        who = controllers[0].name if controllers else "o controlo de gestão"
+        return (
+            f"O centro de custo {state.request.cost_center} não tem orçamento para o pedido nº {state.pr_id} "
+            f"({format_eur(state.request.estimated_value_eur)}). Não o aprovei nem rejeitei: encaminhei-o para "
+            f"**{who}**, do controlo de gestão, como a política prevê."
+        )
     if status == RunStatus.WAITING_HUMAN:
         approvers = erp.find_people_by_role("director")
         who = approvers[0].name if approvers else "o aprovador"

@@ -12,6 +12,7 @@ class Action(str, Enum):
     REJECT_PR = "reject_pr"
     SEND_DECISION_EMAIL = "send_decision_email"
     SEND_DOSSIER_EMAIL = "send_dossier_email"
+    SEND_REFERRAL_EMAIL = "send_referral_email"
 
 
 class PolicyVerdict(str, Enum):
@@ -25,6 +26,7 @@ class HumanApproval(BaseModel):
     approver: str
     decision: Action
     approved_value_eur: float
+    role: str = "director"
     granted_at: datetime
     expires_at: datetime
 
@@ -39,6 +41,8 @@ class AuthContext(BaseModel):
     cited_clauses: list[str] = []
     proposed_by: str = "agent"
     approval: HumanApproval | None = None
+    validation: HumanApproval | None = None
+    budget_insufficient: bool = False
     executed_decision: Action | None = None
     now: datetime
 
@@ -71,7 +75,28 @@ def _check_human_approval(action: Action, ctx: AuthContext) -> Verdict:
         return _deny("approval_expired", "The human approval has expired.")
     if ctx.value_eur is None or ctx.value_eur > approval.approved_value_eur:
         return _deny("value_changed", "The value is higher than the one approved.")
-    return _allow("human_approved", f"Approved by {approval.approver}.")
+    if approval.role != "director":
+        return _deny("wrong_role", "The approval must come from the direction.")
+    if action == Action.APPROVE_PR:
+        return _check_validation(approval, ctx)
+    return _allow("human_approved", f"Decided by {approval.approver}.")
+
+
+def _check_validation(approval: HumanApproval, ctx: AuthContext) -> Verdict:
+    validation = ctx.validation
+    if validation is None:
+        return _deny("validation_required", "Above the agent limit: the Purchasing validation is missing.")
+    if validation.request_id != ctx.request_id or validation.decision != Action.APPROVE_PR:
+        return _deny("validation_mismatch", "The Purchasing validation does not match this approval.")
+    if validation.role != "purchasing":
+        return _deny("wrong_role", "The validation must come from Purchasing.")
+    if validation.approver in (ctx.proposed_by, approval.approver):
+        return _deny("same_person", "The validation must come from a different person.")
+    if validation.expires_at <= ctx.now:
+        return _deny("approval_expired", "The Purchasing validation has expired.")
+    if ctx.value_eur is None or ctx.value_eur > validation.approved_value_eur:
+        return _deny("value_changed", "The value is higher than the one validated.")
+    return _allow("human_approved", f"Approved by {approval.approver}; validated by {validation.approver}.")
 
 
 def _check_decision(action: Action, ctx: AuthContext) -> Verdict:
@@ -101,6 +126,10 @@ def _check_decision(action: Action, ctx: AuthContext) -> Verdict:
 def authorize(action: Action, ctx: AuthContext) -> Verdict:
     if action in (Action.APPROVE_PR, Action.REJECT_PR):
         return _check_decision(action, ctx)
+    if action == Action.SEND_REFERRAL_EMAIL:
+        if ctx.status != Status.VALID or not ctx.budget_insufficient:
+            return _deny("no_referral", "A referral is only for a valid request whose budget is insufficient.")
+        return _allow("referral", "Management control receives the request.")
     if action == Action.SEND_DOSSIER_EMAIL:
         if ctx.band != Band.HUMAN_ACTION or ctx.status != Status.VALID:
             return _deny("no_dossier", "A dossier is only for a valid request above the agent limit.")

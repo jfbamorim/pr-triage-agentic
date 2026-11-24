@@ -52,6 +52,8 @@ class InvestigationReport(BaseModel):
     questions_for_user: list[str] = []
     quotes_required: int | None = None
     quotes_found: int | None = None
+    budget_short: bool = False
+    urgency_unjustified: bool = False
     summary: str
 
 
@@ -172,6 +174,8 @@ def _assemble(facts: Facts, opinion: PolicyOpinion) -> InvestigationReport:
         questions_for_user=questions,
         quotes_required=facts.quotes_required,
         quotes_found=facts.quotes_found,
+        budget_short=facts.budget_short,
+        urgency_unjustified=facts.urgency_unjustified,
         summary=opinion.summary,
     )
 

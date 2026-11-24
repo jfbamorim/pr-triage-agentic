@@ -5,7 +5,7 @@ from pr_triage.agents.triage import TriageOutcome, TriageReport
 from pr_triage.authz import Action, HumanApproval, PolicyVerdict
 from pr_triage.domain.band import Band, determine_band
 from pr_triage.domain.status import EscalationReason
-from pr_triage.supervisor.moves import MAX_ATTEMPTS, MAX_STEPS, allowed_moves, pause_reason
+from pr_triage.supervisor.moves import MAX_ATTEMPTS, MAX_STEPS, allowed_moves, pause_reason, pending_roles
 from pr_triage.supervisor.state import (
     Blocked,
     Move,
@@ -59,8 +59,12 @@ def human(action=Action.APPROVE_PR, approver="maria.santos@exemplo.pt", expires=
     )
 
 
-def moves(state, approval=None):
-    return allowed_moves(state, approval, NOW)
+def purchasing(**kw):
+    return human(approver="pedro.alves@exemplo.pt", **kw).model_copy(update={"role": "purchasing"})
+
+
+def moves(state, approval=None, validation=None):
+    return allowed_moves(state, approval, NOW, validation)
 
 
 def test_a_new_run_starts_with_triage():
@@ -121,9 +125,16 @@ def test_an_investigation_made_before_registration_is_repeated_with_the_request_
     assert moves(state) == [Move.INVESTIGATE]
 
 
-def test_a_request_that_changed_after_registration_is_escalated():
+def test_a_request_that_changed_after_registration_updates_the_open_requisition():
     changed = ready(800.0, registered_request=make_pr(estimated_value_eur=900.0))
-    assert moves(changed) == [Move.ESCALATE]
+    assert moves(changed) == [Move.UPDATE_PR]
+
+
+def test_a_request_that_changed_after_a_decision_or_a_dossier_is_escalated():
+    old = make_pr(estimated_value_eur=900.0)
+    assert moves(ready(800.0, registered_request=old, decision="approved")) == [Move.ESCALATE]
+    assert moves(ready(800.0, registered_request=old, dossier_sent=True)) == [Move.ESCALATE]
+    assert moves(ready(800.0, registered_request=old, referred=True)) == [Move.ESCALATE]
 
 
 def test_missing_quotes_pause_the_run_before_any_decision():
@@ -179,20 +190,30 @@ def test_above_the_limit_the_dossier_goes_out_and_the_run_waits_for_a_human():
 
 def test_a_valid_human_approval_unlocks_the_decision():
     state = ready(14000.0, pr_id=1, dossier_sent=True)
-    assert moves(state, human(Action.APPROVE_PR)) == [Move.APPROVE]
+    assert moves(state, human(Action.APPROVE_PR), purchasing()) == [Move.APPROVE]
     assert moves(state, human(Action.REJECT_PR)) == [Move.REJECT]
-    assert pause_reason(state, human()) is None
+    assert pause_reason(state, human(), purchasing()) is None
+    assert pause_reason(state, human(Action.REJECT_PR)) is None
+
+
+def test_an_approval_without_the_purchasing_validation_keeps_waiting():
+    state = ready(14000.0, pr_id=1, dossier_sent=True)
+    assert moves(state, human(Action.APPROVE_PR)) == []
+    assert pause_reason(state, human(Action.APPROVE_PR)) == RunStatus.WAITING_HUMAN
+    assert pending_roles(state, human(Action.APPROVE_PR), None) == ["purchasing"]
+    assert pending_roles(state, None, None) == ["director", "purchasing"]
+    assert pending_roles(state, None, purchasing()) == ["director"]
 
 
 def test_an_expired_or_self_approval_is_escalated():
     state = ready(14000.0, pr_id=1, dossier_sent=True)
-    assert moves(state, human(expires=NOW - timedelta(minutes=1))) == [Move.ESCALATE]
-    assert moves(state, human(approver="agent")) == [Move.ESCALATE]
+    assert moves(state, human(expires=NOW - timedelta(minutes=1)), purchasing()) == [Move.ESCALATE]
+    assert moves(state, human(approver="agent"), purchasing()) == [Move.ESCALATE]
 
 
 def test_a_value_above_the_approved_one_is_escalated():
     state = ready(20000.0, pr_id=1, dossier_sent=True)
-    assert moves(state, human()) == [Move.ESCALATE]
+    assert moves(state, human(), purchasing()) == [Move.ESCALATE]
 
 
 def test_the_decision_must_be_verified_before_the_email():

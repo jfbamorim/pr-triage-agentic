@@ -133,12 +133,12 @@ def test_an_unknown_cost_center_is_a_problem(tmp_path):
     assert check(facts, CheckName.COST_CENTER) == CheckResult.PROBLEM
 
 
-def test_an_insufficient_budget_is_a_problem_with_a_question(tmp_path):
+def test_an_insufficient_budget_is_a_problem_that_asks_nothing_of_the_user(tmp_path):
     request = monitors(cost_center="CC-LAB-300", estimated_value_eur=1445.0)
     facts = facts_for(tmp_path, request, email=SOFIA)
     assert check(facts, CheckName.BUDGET) == CheckResult.PROBLEM
     assert "800 €" in facts.check(CheckName.BUDGET).evidence
-    assert "outro centro de custo" in facts.questions[0]
+    assert facts.budget_short and facts.questions == []
 
 
 def test_a_value_far_from_the_catalog_price_is_only_a_warning(tmp_path):
@@ -191,9 +191,50 @@ def test_a_framework_contract_dispenses_the_quotes(tmp_path):
     assert facts.quotes_required == 0 and check(facts, CheckName.QUOTES) == CheckResult.OK
 
 
-def test_urgent_requests_need_one_quote_and_large_ones_three(tmp_path):
-    urgent = consulting(is_urgent=True)
-    assert facts_for(tmp_path, urgent, setup=lambda ctx: registered(ctx, urgent)).quotes_required == 1
+def test_an_urgent_request_without_a_written_justification_still_needs_two_quotes(tmp_path):
+    urgent = consulting(is_urgent=True, estimated_value_eur=2000.0)
+    facts = facts_for(tmp_path, urgent, setup=lambda ctx: registered(ctx, urgent, "S02"))
+    assert facts.quotes_required == 2 and facts.urgency_unjustified and facts.quotes_short
+    assert "falta a justificação" in facts.check(CheckName.QUOTES).evidence
+
+
+def test_a_department_head_justification_lets_one_quote_be_enough(tmp_path):
+    urgent = consulting(is_urgent=True, estimated_value_eur=2000.0)
+
+    def setup(ctx):
+        pr_id = registered(ctx, urgent, "S02")
+        ctx.erp.record_urgency_justification("j1", "joao.ferreira@exemplo.pt", pr_id, "Paragem da linha de apoio.")
+        return pr_id
+
+    facts = facts_for(tmp_path, urgent, setup=setup)
+    assert facts.quotes_required == 1 and not facts.urgency_unjustified and not facts.quotes_short
+    assert "joao.ferreira@exemplo.pt" in facts.check(CheckName.QUOTES).evidence
+
+
+def test_only_a_department_head_can_record_an_urgency_justification(tmp_path):
+    import pytest
+    from pr_triage.erp.faults import ErpRejected
+    ctx = make(tmp_path)
+    pr_id = registered(ctx, consulting(is_urgent=True))
+    with pytest.raises(ErpRejected):
+        ctx.erp.record_urgency_justification("j1", ANA, pr_id, "Preciso já.")
+    with pytest.raises(ErpRejected):
+        ctx.erp.record_urgency_justification("j2", "joao.ferreira@exemplo.pt", pr_id, "  ")
+    assert ctx.erp.get_urgency_justification(pr_id) is None
+
+
+def test_urgency_does_not_reduce_the_quotes_above_the_second_threshold(tmp_path):
+    big = consulting(is_urgent=True, estimated_value_eur=8000.0)
+
+    def setup(ctx):
+        pr_id = registered(ctx, big)
+        ctx.erp.record_urgency_justification("j1", "joao.ferreira@exemplo.pt", pr_id, "Urgente.")
+        return pr_id
+
+    assert facts_for(tmp_path, big, setup=setup).quotes_required == 3
+
+
+def test_large_requests_need_three_quotes(tmp_path):
     large = consulting(estimated_value_eur=8000.0)
     assert facts_for(tmp_path, large, setup=lambda ctx: registered(ctx, large)).quotes_required == 3
 
@@ -269,18 +310,18 @@ def test_a_permit_is_refused_when_the_facts_show_a_problem(tmp_path):
     assert "cannot be permits" in result.rejections[0][0]
 
 
-def test_an_insufficient_budget_forces_an_unclear_verdict_with_the_question(tmp_path):
+def test_an_insufficient_budget_is_flagged_and_never_permitted(tmp_path):
     request = monitors(cost_center="CC-LAB-300", estimated_value_eur=1445.0)
     result = investigate(
         tmp_path,
         [search(),
-         final(policy_verdict="blocks", cited_clauses=[T1]),
-         final(policy_verdict="unclear")],
+         final(policy_verdict="permits", cited_clauses=[T1]),
+         final(policy_verdict="blocks", cited_clauses=[T1])],
         request=request, email=SOFIA,
     )
-    assert result.failure is None and result.report.policy_verdict.value == "unclear"
-    assert "can only be unclear" in result.rejections[0][0]
-    assert "outro centro de custo" in result.report.questions_for_user[0]
+    assert result.failure is None and result.report.policy_verdict.value == "blocks"
+    assert "cannot be permits" in result.rejections[0][0]
+    assert result.report.budget_short and result.report.questions_for_user == []
 
 
 def test_missing_quotes_force_an_unclear_verdict(tmp_path):

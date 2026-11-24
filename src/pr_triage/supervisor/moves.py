@@ -11,7 +11,13 @@ MAX_STEPS = 25
 RESOLVABLE = {"cost_center", "estimated_value_eur"}
 
 
-def _allowed(action: Action, state: RunState, approval: HumanApproval | None, now: datetime) -> bool:
+def _allowed(
+    action: Action,
+    state: RunState,
+    approval: HumanApproval | None,
+    now: datetime,
+    validation: HumanApproval | None = None,
+) -> bool:
     value = state.request.estimated_value_eur
     executed = {"approved": Action.APPROVE_PR, "rejected": Action.REJECT_PR}.get(state.decision)
     context = AuthContext(
@@ -22,6 +28,7 @@ def _allowed(action: Action, state: RunState, approval: HumanApproval | None, no
         policy_verdict=state.investigation.policy_verdict,
         cited_clauses=state.investigation.cited_clauses,
         approval=approval,
+        validation=validation,
         executed_decision=executed,
         now=now,
     )
@@ -48,7 +55,9 @@ def _needs_info_moves(state: RunState) -> list[Move]:
     return [Move.ASK_USER]
 
 
-def _decision_moves(state: RunState, approval: HumanApproval | None, now: datetime) -> list[Move]:
+def _decision_moves(
+    state: RunState, approval: HumanApproval | None, now: datetime, validation: HumanApproval | None
+) -> list[Move]:
     band = determine_band(state.request.estimated_value_eur)
     verdict = state.investigation.policy_verdict
     if state.decision is not None:
@@ -56,9 +65,11 @@ def _decision_moves(state: RunState, approval: HumanApproval | None, now: dateti
             return [Move.VERIFY]
         if state.decision_email_sent:
             return []
-        if _allowed(Action.SEND_DECISION_EMAIL, state, approval, now):
+        if _allowed(Action.SEND_DECISION_EMAIL, state, approval, now, validation):
             return [Move.SEND_DECISION_EMAIL]
         return [Move.ESCALATE]
+    if state.investigation.budget_short:
+        return [] if state.referred else [Move.REFER_CONTROLLING]
     if quotes_short(state):
         return [Move.ASK_USER]
     if band == Band.HUMAN_ACTION:
@@ -66,11 +77,11 @@ def _decision_moves(state: RunState, approval: HumanApproval | None, now: dateti
             if _allowed(Action.SEND_DOSSIER_EMAIL, state, approval, now):
                 return [Move.SEND_DOSSIER]
             return [Move.ESCALATE]
-        if approval is None:
+        if approval is None or (approval.decision == Action.APPROVE_PR and validation is None):
             return []
         action = approval.decision
         move = Move.APPROVE if action == Action.APPROVE_PR else Move.REJECT
-        if action in (Action.APPROVE_PR, Action.REJECT_PR) and _allowed(action, state, approval, now):
+        if action in (Action.APPROVE_PR, Action.REJECT_PR) and _allowed(action, state, approval, now, validation):
             return [move]
         return [Move.ESCALATE]
     if verdict == PolicyVerdict.UNCLEAR:
@@ -78,12 +89,14 @@ def _decision_moves(state: RunState, approval: HumanApproval | None, now: dateti
             return [Move.ASK_USER]
         return [Move.ESCALATE]
     action = Action.APPROVE_PR if verdict == PolicyVerdict.PERMITS else Action.REJECT_PR
-    if not _allowed(action, state, approval, now):
+    if not _allowed(action, state, approval, now, validation):
         return [Move.ESCALATE]
     return [Move.APPROVE if action == Action.APPROVE_PR else Move.REJECT]
 
 
-def allowed_moves(state: RunState, approval: HumanApproval | None, now: datetime) -> list[Move]:
+def allowed_moves(
+    state: RunState, approval: HumanApproval | None, now: datetime, validation: HumanApproval | None = None
+) -> list[Move]:
     if state.status in TERMINAL:
         return []
     if len(state.steps) >= MAX_STEPS:
@@ -100,17 +113,29 @@ def allowed_moves(state: RunState, approval: HumanApproval | None, now: datetime
     if state.pr_id is None:
         return [Move.REGISTER]
     if state.registered_request != state.request:
-        return [Move.ESCALATE]
+        if state.decision is not None or state.dossier_sent or state.referred:
+            return [Move.ESCALATE]
+        return [Move.UPDATE_PR]
     if (
         state.investigation is None
         or state.investigated_request != state.request
         or state.investigated_pr_id != state.pr_id
     ):
         return [Move.INVESTIGATE]
-    return _decision_moves(state, approval, now)
+    return _decision_moves(state, approval, now, validation)
 
 
-def pause_reason(state: RunState, approval: HumanApproval | None) -> RunStatus | None:
+def pending_roles(state: RunState, approval: HumanApproval | None, validation: HumanApproval | None) -> list[str]:
+    if approval is None:
+        return ["director", "purchasing"] if validation is None else ["director"]
+    if approval.decision == Action.APPROVE_PR and validation is None:
+        return ["purchasing"]
+    return []
+
+
+def pause_reason(
+    state: RunState, approval: HumanApproval | None, validation: HumanApproval | None = None
+) -> RunStatus | None:
     if state.status in TERMINAL or state.decision is not None or not state.dossier_sent:
         return None
-    return RunStatus.WAITING_HUMAN if approval is None else None
+    return RunStatus.WAITING_HUMAN if pending_roles(state, approval, validation) else None

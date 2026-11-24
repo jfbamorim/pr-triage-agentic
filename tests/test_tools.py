@@ -73,10 +73,11 @@ def decide(ctx, tool, pr_id, verdict="permits", clauses=None):
     )
 
 
-def human(pr_id, action=Action.APPROVE_PR, value=14000.0):
+def human(pr_id, action=Action.APPROVE_PR, value=14000.0, role="director", approver="maria.santos@exemplo.pt"):
     return HumanApproval(
         request_id=pr_id,
-        approver="maria.santos@exemplo.pt",
+        role=role,
+        approver=approver,
         decision=action,
         approved_value_eur=value,
         granted_at=NOW - timedelta(hours=1),
@@ -89,7 +90,7 @@ def test_every_tool_has_a_unique_name_and_a_contract():
     assert len(names) == len(set(names))
     assert all(tool.input_model.model_json_schema() and tool.description for tool in TOOLS)
     assert {n for n, t in BY_NAME.items() if t.writes} == {
-        "register_pr", "approve_pr", "reject_pr", "send_email"
+        "register_pr", "update_pr", "approve_pr", "reject_pr", "send_email"
     }
 
 
@@ -185,8 +186,29 @@ def test_above_the_limit_needs_a_human_approval_on_record(tmp_path):
     assert refused.error.detail == "human_approval_required"
     assert ctx.erp.get_pr(pr_id).state == PrState.OPEN
     ctx.erp.record_human_approval("a1", human(pr_id))
+    assert decide(ctx, "approve_pr", pr_id).error.detail == "validation_required"
+    ctx.erp.record_human_approval("a2", human(pr_id, role="purchasing", approver="pedro.alves@exemplo.pt"))
     assert decide(ctx, "approve_pr", pr_id).ok
     assert ctx.erp.get_pr(pr_id).state == PrState.APPROVED
+
+
+def update_args(pr_id, **overrides):
+    values = dict(pr_id=pr_id, requester_email="ana.silva@exemplo.pt", item="monitores", quantity=2,
+                  value_eur=700.0, cost_center="CC-TI-100", category="it_equipment")
+    values.update(overrides)
+    return values
+
+
+def test_an_open_requisition_can_be_updated_but_not_by_someone_else_nor_after_a_decision(tmp_path):
+    ctx = make(tmp_path)
+    pr_id = register(ctx, 800)
+    assert call_tool(ctx, "update_pr", update_args(pr_id)).ok
+    assert ctx.erp.get_pr(pr_id).value_eur == 700.0
+    other = call_tool(ctx, "update_pr", update_args(pr_id, requester_email="rui.costa@exemplo.pt", value_eur=10))
+    assert other.error.code == "not_requester" or other.error.detail == "not_requester"
+    assert decide(ctx, "approve_pr", pr_id, clauses=["02-escaloes-e-cotacoes#2.1"]).ok
+    late = call_tool(ctx, "update_pr", update_args(pr_id, value_eur=100.0))
+    assert not late.ok and ctx.erp.get_pr(pr_id).value_eur == 700.0
 
 
 def test_an_expired_human_approval_is_refused(tmp_path):

@@ -8,7 +8,7 @@ from openai import OpenAI
 from pr_triage.erp import ErpStore, create_demo_erp
 from pr_triage.supervisor.live import live_orchestrator
 from pr_triage.memory import InvalidMemory, MemoryStore
-from pr_triage.supervisor.actions import record_human_decision, record_quote
+from pr_triage.supervisor.actions import record_human_decision, record_quote, record_urgency_justification
 from pr_triage.supervisor.state import RunState
 from pr_triage.toolserver.client import McpToolPort
 from pr_triage.supervisor.store import RunStore
@@ -17,7 +17,11 @@ from pr_triage.tools.policy import PolicyIndex
 ERP_PATH = "state/erp.db"
 MEMORY_PATH = "state/memory.db"
 RUNS_PATH = "state/runs.db"
-APPROVER = "maria.santos@exemplo.pt"
+APPROVERS = {
+    "director": "maria.santos@exemplo.pt",
+    "purchasing": "pedro.alves@exemplo.pt",
+    "head": "joao.ferreira@exemplo.pt",
+}
 
 
 def show(state: RunState, erp: ErpStore) -> None:
@@ -79,6 +83,10 @@ def main() -> None:
     approve = sub.add_parser("approve")
     approve.add_argument("run_id")
     approve.add_argument("--reject", action="store_true")
+    approve.add_argument("--as", dest="role", choices=["director", "purchasing"], default="director")
+    justify = sub.add_parser("justify", help="justificação escrita de urgência pelo responsável do departamento")
+    justify.add_argument("run_id")
+    justify.add_argument("text")
     quote = sub.add_parser("quote")
     quote.add_argument("run_id")
     quote.add_argument("supplier_id")
@@ -102,7 +110,7 @@ def main() -> None:
         manage_memory(args, erp, memory)
         return
     store = RunStore(RUNS_PATH)
-    port = None if args.no_mcp or args.command in ("quote", "approve", "show") else McpToolPort.stdio(ERP_PATH).start()
+    port = None if args.no_mcp or args.command in ("quote", "approve", "justify", "show") else McpToolPort.stdio(ERP_PATH).start()
     orchestrator = live_orchestrator(erp, PolicyIndex(OpenAI()), store, OpenAI(), port=port, memory=memory)
 
     if args.command == "run":
@@ -116,9 +124,14 @@ def main() -> None:
         record_quote(erp, state, args.supplier_id, args.amount)
         print(f"Cotação de {args.supplier_id} ({args.amount:g} €) registada no pedido {state.pr_id}. Corre `resume`.")
         return
+    elif args.command == "justify":
+        state = store.load(args.run_id)
+        record_urgency_justification(erp, state, APPROVERS["head"], args.text)
+        print(f"Justificação registada no pedido {state.pr_id}. Corre `resume`.")
+        return
     elif args.command == "approve":
         state = store.load(args.run_id)
-        record_human_decision(erp, state, APPROVER, not args.reject)
+        record_human_decision(erp, state, APPROVERS[args.role], not args.reject)
         print("Decisão humana registada no ERP. Corre `resume` para continuar.")
         return
     else:

@@ -5,7 +5,7 @@ from pr_triage.erp.models import PrState
 from pr_triage.supervisor.orchestrator import Orchestrator, Specialists
 from pr_triage.supervisor.state import Move, RunStatus
 from pr_triage.supervisor.store import RunStore
-from test_orchestrator import ANA, NOW, Setup, approval
+from test_orchestrator import ANA, NOW, Setup, approval, validation
 from test_tools import FakePolicy
 from datetime import timedelta
 
@@ -121,6 +121,7 @@ def test_a_human_approval_that_expired_during_the_interruption_is_not_used(tmp_p
     s = Setup(tmp_path)
     s.start("grande")
     s.erp.record_human_approval("h1", approval())
+    s.erp.record_human_approval("h2", validation())
     s.erp.clock = lambda: NOW + timedelta(hours=30)
     result = fresh_orchestrator(s).resume("run-1")
     assert result.status == RunStatus.NEEDS_MANUAL

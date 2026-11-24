@@ -17,6 +17,7 @@ MAX_WORDS = 250
 class EmailKind(str, Enum):
     DECISION = "decision"
     DOSSIER = "dossier"
+    REFERRAL = "referral"
 
 
 class Facts(BaseModel):
@@ -130,6 +131,25 @@ def build_dossier_brief(
     )
 
 
+def build_referral_brief(
+    pr: PrRecord,
+    requester: Person,
+    controller: Person,
+    evidence: list[Evidence],
+    cited_clauses: list[str],
+    reasons: list[str],
+    budget_available: float | None = None,
+) -> CommunicationBrief:
+    return CommunicationBrief(
+        kind=EmailKind.REFERRAL,
+        recipient_email=controller.email,
+        recipient_name=controller.name,
+        facts=_facts(pr, requester, budget_available),
+        clauses=_clauses(evidence, cited_clauses),
+        reasons=reasons,
+    )
+
+
 NUMBER = re.compile(r"\d+(?:[  .]\d{3})*(?:,\d+)?")
 REJECTION = re.compile(r"rejeit|recus|indefer|não (?:foi )?aprovad", re.IGNORECASE)
 APPROVAL = re.compile(r"(?<!não )(?<!não foi )aprovad|aprovamos|aprovou", re.IGNORECASE)
@@ -190,7 +210,7 @@ def check_email(draft: EmailDraft, brief: CommunicationBrief) -> list[str]:
         problems.append(f"the email names people who are not in the briefing: {unknown_names}")
     if facts.value_eur not in numbers_in(stripped):
         problems.append("the email must state the value of the request")
-    if brief.kind == EmailKind.DOSSIER:
+    if brief.kind in (EmailKind.DOSSIER, EmailKind.REFERRAL):
         if facts.cost_center not in text:
             problems.append("a dossier must name the cost center")
         if facts.requester_name not in text:
@@ -228,6 +248,9 @@ Regras:
 - Se o tipo for decision: diz logo no início se o pedido foi aprovado ou rejeitado e porquê.
 - Se o tipo for dossier: o destinatário é quem tem de decidir. Resume o pedido (requerente, centro de custo,
   valor, orçamento disponível se existir), o que a política e as verificações dizem, e pede a decisão.
+- Se o tipo for referral: o destinatário é o controlo de gestão. Explica que o orçamento do centro de custo é
+  insuficiente para o pedido (indica o orçamento disponível e o valor), diz que o pedido ficou por decidir
+  (nem aprovado nem rejeitado) e pede que trate do encaminhamento.
 - Tom profissional e direto, no máximo 150 palavras.
 """
 

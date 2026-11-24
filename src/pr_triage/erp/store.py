@@ -27,6 +27,7 @@ from pr_triage.erp.models import (
     PrState,
     Quote,
     Supplier,
+    UrgencyJustification,
     WriteResult,
 )
 
@@ -68,10 +69,14 @@ CREATE TABLE IF NOT EXISTS quotes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, pr_id INTEGER NOT NULL,
     supplier_id TEXT NOT NULL, amount_eur REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS urgency_justifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, pr_id INTEGER NOT NULL,
+    by_person TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS human_approvals (
     id INTEGER PRIMARY KEY AUTOINCREMENT, pr_id INTEGER NOT NULL,
     approver TEXT NOT NULL, decision TEXT NOT NULL, approved_value_eur REAL NOT NULL,
-    granted_at TEXT NOT NULL, expires_at TEXT NOT NULL
+    role TEXT NOT NULL DEFAULT 'director', granted_at TEXT NOT NULL, expires_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT, to_addr TEXT NOT NULL, subject TEXT NOT NULL,
@@ -131,6 +136,9 @@ class ErpStore:
         self._calls: dict[str, int] = {}
         with closing(self.connect()) as conn, conn:
             conn.executescript(SCHEMA)
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(human_approvals)")}
+            if "role" not in columns:
+                conn.execute("ALTER TABLE human_approvals ADD COLUMN role TEXT NOT NULL DEFAULT 'director'")
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
@@ -299,12 +307,11 @@ class ErpStore:
             ).fetchall()
         return [Quote(**dict(row)) for row in rows]
 
-    def get_human_approval(self, pr_id: int) -> HumanApproval | None:
-        self._enter("get_human_approval")
+    def _latest_approval(self, pr_id: int, role: str) -> HumanApproval | None:
         with closing(self.connect()) as conn:
             row = conn.execute(
-                "SELECT * FROM human_approvals WHERE pr_id = ? ORDER BY id DESC LIMIT 1",
-                (pr_id,),
+                "SELECT * FROM human_approvals WHERE pr_id = ? AND role = ? ORDER BY id DESC LIMIT 1",
+                (pr_id, role),
             ).fetchone()
         if row is None:
             return None
@@ -313,9 +320,18 @@ class ErpStore:
             approver=row["approver"],
             decision=Action(row["decision"]),
             approved_value_eur=row["approved_value_eur"],
+            role=row["role"],
             granted_at=datetime.fromisoformat(row["granted_at"]),
             expires_at=datetime.fromisoformat(row["expires_at"]),
         )
+
+    def get_human_approval(self, pr_id: int) -> HumanApproval | None:
+        self._enter("get_human_approval")
+        return self._latest_approval(pr_id, "director")
+
+    def get_purchasing_validation(self, pr_id: int) -> HumanApproval | None:
+        self._enter("get_purchasing_validation")
+        return self._latest_approval(pr_id, "purchasing")
 
     def get_outbox(self, pr_id: int | None = None) -> list[EmailRecord]:
         self._enter("get_outbox")
@@ -404,6 +420,41 @@ class ErpStore:
 
         return self._write("register_pr", key, None, actor, apply)
 
+    def update_pr(
+        self,
+        key: str,
+        actor: str,
+        pr_id: int,
+        requester_email: str,
+        item: str,
+        quantity: int,
+        value_eur: float,
+        cost_center: str,
+        category: Category,
+        urgent: bool = False,
+    ) -> WriteResult:
+        def apply(conn: sqlite3.Connection) -> dict:
+            pr = self._load_pr(conn, pr_id)
+            if pr.requester_email != requester_email:
+                raise ErpRejected("not_requester", "Only the requester can change this request.")
+            if pr.state != PrState.OPEN:
+                raise ErpRejected("not_open", f"Request {pr_id} is already {pr.state.value}.")
+            center = conn.execute(
+                "SELECT active FROM cost_centers WHERE code = ?", (cost_center,)
+            ).fetchone()
+            if center is None:
+                raise ErpRejected("unknown_cost_center", f"{cost_center} does not exist.")
+            if not center["active"]:
+                raise ErpRejected("inactive_cost_center", f"{cost_center} is not active.")
+            conn.execute(
+                "UPDATE purchase_requests SET item = ?, quantity = ?, value_eur = ?, cost_center = ?,"
+                " category = ?, urgent = ? WHERE pr_id = ?",
+                (item, quantity, value_eur, cost_center, category.value, int(urgent), pr_id),
+            )
+            return {"pr_id": pr_id}
+
+        return self._write("update_pr", key, pr_id, actor, apply)
+
     def add_quote(
         self, key: str, actor: str, pr_id: int, supplier_id: str, amount_eur: float
     ) -> WriteResult:
@@ -417,15 +468,45 @@ class ErpStore:
 
         return self._write("add_quote", key, pr_id, actor, apply)
 
+    def record_urgency_justification(self, key: str, actor: str, pr_id: int, text: str) -> WriteResult:
+        person = self.get_person(actor)
+        if person is None or person.role.value != "department_head":
+            raise ErpRejected("not_authorized", "only a department head can justify an urgency")
+        if not text.strip():
+            raise ErpRejected("empty_justification", "the justification cannot be empty")
+
+        def apply(conn: sqlite3.Connection) -> dict:
+            self._load_pr(conn, pr_id)
+            cursor = conn.execute(
+                "INSERT INTO urgency_justifications (pr_id, by_person, text, created_at) VALUES (?, ?, ?, ?)",
+                (pr_id, actor, text.strip(), self._now()),
+            )
+            return {"justification_id": cursor.lastrowid}
+
+        return self._write("record_urgency_justification", key, pr_id, actor, apply)
+
+    def get_urgency_justification(self, pr_id: int) -> UrgencyJustification | None:
+        self._enter("get_urgency_justification")
+        with closing(self.connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM urgency_justifications WHERE pr_id = ? ORDER BY id DESC LIMIT 1", (pr_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return UrgencyJustification(
+            pr_id=row["pr_id"], by=row["by_person"], text=row["text"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
     def record_human_approval(self, key: str, approval: HumanApproval) -> WriteResult:
         def apply(conn: sqlite3.Connection) -> dict:
             self._load_pr(conn, approval.request_id)
             cursor = conn.execute(
                 "INSERT INTO human_approvals (pr_id, approver, decision, approved_value_eur,"
-                " granted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                " role, granted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     approval.request_id, approval.approver, approval.decision.value,
-                    approval.approved_value_eur, approval.granted_at.isoformat(),
+                    approval.approved_value_eur, approval.role, approval.granted_at.isoformat(),
                     approval.expires_at.isoformat(),
                 ),
             )

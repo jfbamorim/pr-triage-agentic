@@ -86,6 +86,13 @@ class Quote(BaseModel):
     amount_eur: float
 
 
+class UrgencyJustification(BaseModel):
+    pr_id: int
+    by: str
+    text: str
+    created_at: datetime
+
+
 class PrRecord(BaseModel):
     pr_id: int
     requester_email: str

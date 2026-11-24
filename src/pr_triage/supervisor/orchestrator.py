@@ -7,6 +7,7 @@ from pr_triage.agents.communicator import (
     CommunicationResult,
     build_decision_brief,
     build_dossier_brief,
+    build_referral_brief,
     deliver,
 )
 from pr_triage.agents.investigator import InvestigationResult
@@ -15,7 +16,7 @@ from pr_triage.domain.schemas import Evidence, PurchaseRequest
 from pr_triage.erp import ErpStore, ErpUnavailable
 from pr_triage.supervisor.agent import Choice
 from pr_triage.memory import MemoryStore, MemoryView
-from pr_triage.supervisor.moves import allowed_moves, pause_reason, quotes_short
+from pr_triage.supervisor.moves import allowed_moves, pause_reason, pending_roles, quotes_short
 from pr_triage.supervisor.reconcile import reconcile
 from pr_triage.supervisor.state import (
     Blocked,
@@ -142,12 +143,13 @@ class Orchestrator:
         while state.status == RunStatus.RUNNING:
             try:
                 approval = self.erp.get_human_approval(state.pr_id) if state.pr_id else None
+                validation = self.erp.get_purchasing_validation(state.pr_id) if state.pr_id else None
             except ErpUnavailable as error:
                 self._escalate(state, f"The ERP is unavailable: {error}")
                 break
-            moves = allowed_moves(state, approval, self.erp.clock())
+            moves = allowed_moves(state, approval, self.erp.clock(), validation)
             if not moves:
-                self._pause_or_finish(state, approval)
+                self._pause_or_finish(state, approval, validation)
                 self._save(state)
                 break
             forced = len(moves) == 1
@@ -170,14 +172,19 @@ class Orchestrator:
             self._save(state)
         return state
 
-    def _pause_or_finish(self, state: RunState, approval) -> None:
-        if state.decision_email_sent:
+    def _pause_or_finish(self, state: RunState, approval, validation) -> None:
+        if state.referred:
+            state.status = RunStatus.REFERRED
+            state.outcome_message = f"Request {state.pr_id} was referred to management control: the budget is insufficient."
+        elif state.decision_email_sent:
             state.status = RunStatus.DONE
             state.outcome_message = f"Request {state.pr_id} {state.decision}; the requester was notified."
             self._remember(state)
-        elif pause_reason(state, approval) == RunStatus.WAITING_HUMAN:
+        elif pause_reason(state, approval, validation) == RunStatus.WAITING_HUMAN:
             state.status = RunStatus.WAITING_HUMAN
-            state.outcome_message = f"Request {state.pr_id} is waiting for a human approval."
+            state.outcome_message = (
+                f"Request {state.pr_id} is waiting for a human approval ({', '.join(pending_roles(state, approval, validation))})."
+            )
         else:
             self._escalate(state, "No allowed move and nothing to wait for.")
 
@@ -261,6 +268,11 @@ class Orchestrator:
                 f"de fornecedores distintos e há {inv.quotes_found or 0} registadas. "
                 "Regista-as no ERP e retoma o pedido."
             )
+            if inv.urgency_unjustified:
+                question += (
+                    " O pedido é urgente: para bastar uma cotação, o responsável do departamento "
+                    "tem de justificar a urgência por escrito (cláusula 2.4)."
+                )
         if question is None and inv is not None and inv.questions_for_user:
             question = inv.questions_for_user[0]
         if question is None and triage.outcome == TriageOutcome.NEEDS_INFO:
@@ -308,6 +320,28 @@ class Orchestrator:
         state.registered_request = request
         state.blocked = None
         return f"pr_id={state.pr_id}"
+
+    def _do_update_pr(self, state: RunState, choice: Choice) -> str:
+        request = state.request
+        result = call_tool(
+            self._ctx(state),
+            "update_pr",
+            dict(
+                pr_id=state.pr_id,
+                requester_email=state.requester_email,
+                item=request.item,
+                quantity=request.quantity,
+                value_eur=request.estimated_value_eur,
+                cost_center=request.cost_center,
+                category=request.category.value,
+                urgent=request.is_urgent,
+            ),
+        )
+        if not result.ok:
+            return self._tool_failed(state, Move.UPDATE_PR, result)
+        state.registered_request = request
+        state.blocked = None
+        return f"pr_id={state.pr_id} updated"
 
     def _decide(self, state: RunState, move: Move, tool: str, decision: str) -> str:
         inv = state.investigation
@@ -380,6 +414,29 @@ class Orchestrator:
         state.dossier_sent = True
         state.blocked = None
         return f"dossier sent to {approvers[0].email}"
+
+    def _do_refer_controlling(self, state: RunState, choice: Choice) -> str:
+        controllers = self.erp.find_people_by_role("controlling")
+        if not controllers:
+            return self._block(state, Move.REFER_CONTROLLING, ["no management control contact is registered"], False)
+        pr = self.erp.get_pr(state.pr_id)
+        inv = state.investigation
+        reasons = [inv.summary] + [f"{c.name.value}: {c.result.value} - {c.evidence}" for c in inv.checks]
+        brief = build_referral_brief(
+            pr,
+            self.erp.get_person(state.requester_email),
+            controllers[0],
+            self._evidence(state),
+            inv.cited_clauses,
+            reasons,
+            self._budget_available(state),
+        )
+        outcome = self._send(state, Move.REFER_CONTROLLING, brief)
+        if isinstance(outcome, str):
+            return outcome
+        state.referred = True
+        state.blocked = None
+        return f"referred to {controllers[0].email}"
 
     def _do_verify(self, state: RunState, choice: Choice) -> str:
         problems = verify_decision(self.erp, state)

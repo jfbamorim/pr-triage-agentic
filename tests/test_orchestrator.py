@@ -27,6 +27,7 @@ NOW = datetime(2026, 11, 24, 10, 0, tzinfo=timezone.utc)
 T1 = "02-escaloes-e-cotacoes#2.1"
 T33 = "03-fornecedores-e-categorias#3.3"
 ANA = "ana.silva@exemplo.pt"
+SOFIA = "sofia.matos@exemplo.pt"
 
 
 def ev(chunk_id, clause, title):
@@ -50,6 +51,11 @@ REQUESTS = {
     "sem item": monitors(item=None),
     "completar": blank(item="monitores"),
     "grande": monitors(estimated_value_eur=14000.0),
+    "urgente": monitors(item="consultoria", quantity=1, estimated_value_eur=2000.0,
+                        category=Category.SERVICES, is_urgent=True),
+    "servico2": monitors(item="consultoria", quantity=1, estimated_value_eur=2500.0,
+                         category=Category.SERVICES),
+    "sem orcamento": monitors(cost_center="CC-LAB-300", estimated_value_eur=1445.0),
     "inativo": monitors(estimated_value_eur=300.0, cost_center="CC-OLD-900"),
     "servico": monitors(item="consultoria", quantity=1, estimated_value_eur=3000.0,
                         category=Category.SERVICES),
@@ -110,10 +116,19 @@ class FakeInvestigator:
         contract = any(c.in_force for c in self.erp.find_framework_contracts(request.category))
         if pr_id and value >= 1000 and not contract:
             required = 2 if value <= 5000 else 3
+            if request.is_urgent and value <= 5000 and self.erp.get_urgency_justification(pr_id):
+                required = 1
             found = len({q.supplier_id for q in self.erp.get_quotes(pr_id)})
             if found < required:
                 verdict, questions = PolicyVerdict.UNCLEAR, ["Faltam cotações."]
+        budget = self.erp.get_budget(request.cost_center) if request.cost_center else None
+        budget_short = budget is not None and value is not None and budget.available_eur < value
+        unjustified = bool(
+            pr_id and request.is_urgent and 1000 <= value <= 5000 and not contract
+            and not self.erp.get_urgency_justification(pr_id)
+        )
         return InvestigationResult(report=InvestigationReport(
+            budget_short=budget_short, urgency_unjustified=unjustified,
             resolved_fields=resolved, policy_verdict=verdict, cited_clauses=list(self.clauses),
             questions_for_user=questions, quotes_required=required, quotes_found=found,
             summary="Dentro da política."))
@@ -135,6 +150,11 @@ class FakeWriter:
             verb = "aprovado" if brief.decision == "approved" else "rejeitado"
             body = f"Olá {f.requester_name}, o pedido de {f.quantity} {f.item}, de {f.value_eur:g} €, foi {verb}. {clauses}"
             subject = "Decisão sobre o pedido de compra"
+        elif brief.kind.value == "referral":
+            body = (f"Olá {brief.recipient_name}, {f.requester_name} pede {f.quantity} {f.item} por "
+                    f"{f.value_eur:g} € no centro de custo {f.cost_center}, que só tem "
+                    f"{f.budget_available_eur:g} € disponíveis. {clauses} Peço que trate do encaminhamento.")
+            subject = "Orçamento insuficiente"
         else:
             budget = f" com {f.budget_available_eur:g} € de orçamento disponível" if f.budget_available_eur else ""
             body = (f"Olá {brief.recipient_name}, {f.requester_name} pede {f.quantity} {f.item} por "
@@ -180,6 +200,10 @@ def approval(pr_id=1, action=Action.APPROVE_PR, value=14000.0):
     return HumanApproval(request_id=pr_id, approver="maria.santos@exemplo.pt", decision=action,
                          approved_value_eur=value, granted_at=NOW - timedelta(hours=1),
                          expires_at=NOW + timedelta(hours=23))
+
+
+def validation(pr_id=1, value=14000.0):
+    return approval(pr_id, value=value).model_copy(update={"approver": "pedro.alves@exemplo.pt", "role": "purchasing"})
 
 
 def moves_of(state):
@@ -234,6 +258,10 @@ def test_above_the_limit_the_run_waits_for_a_human_then_finishes(tmp_path):
     assert len(s.erp.get_outbox(1)) == 1
 
     s.erp.record_human_approval("h1", approval())
+    waiting = s.orchestrator.resume("run-1")
+    assert waiting.status == RunStatus.WAITING_HUMAN and "purchasing" in waiting.outcome_message
+    assert s.erp.get_pr(1).state == PrState.OPEN
+    s.erp.record_human_approval("h2", validation())
     done = s.orchestrator.resume("run-1")
     assert done.status == RunStatus.DONE
     assert s.erp.get_pr(1).state == PrState.APPROVED
@@ -256,6 +284,7 @@ def test_an_expired_human_approval_is_escalated_and_nothing_is_approved(tmp_path
     s.start("grande")
     expired = approval().model_copy(update={"expires_at": NOW - timedelta(minutes=1)})
     s.erp.record_human_approval("h1", expired)
+    s.erp.record_human_approval("h2", validation())
     state = s.orchestrator.resume("run-1")
     assert state.status == RunStatus.NEEDS_MANUAL
     assert s.erp.get_pr(1).state == PrState.OPEN
@@ -418,3 +447,58 @@ def test_the_investigation_question_wins_over_the_generic_triage_follow_up(tmp_p
     state = s.start("sem centro", "tiago.lopes@exemplo.pt")
     assert state.status == RunStatus.WAITING_USER
     assert state.question == "Qual o centro de custo?"
+
+
+def test_an_insufficient_budget_is_referred_to_management_control_without_a_decision(tmp_path):
+    s = Setup(tmp_path)
+    state = s.start("sem orcamento", SOFIA)
+    assert state.status == RunStatus.REFERRED and state.question is None
+    assert moves_of(state) == [Move.TRIAGE, Move.REGISTER, Move.INVESTIGATE, Move.REFER_CONTROLLING]
+    pr = s.erp.get_pr(1)
+    assert pr.state == PrState.OPEN and pr.cost_center == "CC-LAB-300"
+    assert s.erp.get_budget("CC-LAB-300").available_eur == 800.0
+    mail = s.erp.get_outbox(1)
+    assert [(m.kind, m.to_addr) for m in mail] == [("referral", "helena.dias@exemplo.pt")]
+    assert {a.action for a in s.erp.get_actions()} == {"register_pr", "send_email"}
+
+
+def test_a_referred_run_does_not_repeat_the_referral_when_resumed(tmp_path):
+    s = Setup(tmp_path)
+    s.start("sem orcamento", SOFIA)
+    again = s.orchestrator.resume("run-1")
+    assert again.status == RunStatus.REFERRED and len(s.erp.get_outbox(1)) == 1
+
+
+def test_the_referral_is_only_allowed_when_the_budget_really_is_insufficient(tmp_path):
+    from test_tools import make, register
+    ctx = make(tmp_path)
+    pr_id = register(ctx, 1445)
+    from pr_triage.tools import call_tool
+    sent = call_tool(ctx, "send_email", {"pr_id": pr_id, "kind": "referral", "to": "helena.dias@exemplo.pt",
+                                         "subject": "s", "body": "b"})
+    assert sent.error.detail == "no_referral"
+    wrong = call_tool(ctx, "send_email", {"pr_id": pr_id, "kind": "referral", "to": "maria.santos@exemplo.pt",
+                                          "subject": "s", "body": "b"})
+    assert wrong.error.code == "wrong_recipient"
+
+
+def test_an_urgent_request_needs_the_department_head_justification_to_use_one_quote(tmp_path):
+    s = Setup(tmp_path)
+    paused = s.start("urgente")
+    assert paused.status == RunStatus.WAITING_USER and "justificar a urgência" in paused.question
+    s.erp.add_quote("q1", "ana", 1, "S02", 1900.0)
+    assert s.orchestrator.resume("run-1").status == RunStatus.WAITING_USER
+    s.erp.record_urgency_justification("j1", "joao.ferreira@exemplo.pt", 1, "Prazo legal na sexta-feira.")
+    done = s.orchestrator.resume("run-1")
+    assert done.status == RunStatus.DONE and s.erp.get_pr(1).state == PrState.APPROVED
+
+
+def test_a_changed_request_after_registration_updates_the_open_requisition_instead_of_escalating(tmp_path):
+    s = Setup(tmp_path)
+    paused = s.start("servico")
+    assert paused.status == RunStatus.WAITING_USER and s.erp.get_pr(1).value_eur == 3000.0
+    state = s.orchestrator.reply("run-1", "servico2")
+    assert Move.UPDATE_PR in moves_of(state) and Move.ESCALATE not in moves_of(state)
+    assert state.status == RunStatus.WAITING_USER
+    assert s.erp.get_pr(1).value_eur == 2500.0 and s.erp.get_pr(1).state == PrState.OPEN
+    assert [a.action for a in s.erp.get_actions()].count("register_pr") == 1

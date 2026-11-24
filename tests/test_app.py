@@ -65,15 +65,40 @@ def test_a_small_request_runs_to_completion_and_shows_the_effects(app):
     assert any("Email para ana.silva@exemplo.pt" in e.label for e in at.expander)
 
 
-def test_a_large_request_waits_for_the_approver_role_to_finish_it(app):
+def test_a_large_request_needs_the_direction_and_then_purchasing(app):
     at, runtime = app
     submit(at, "grande")
     assert "À espera de aprovação humana" in page(at)
     at.radio(key="role").set_value("Aprovador").run()
     next(b for b in at.button if b.label == "Aprovar").click().run()
     assert not at.exception
+    assert runtime.erp.get_pr(1).state.value == "open"
+    at.radio(key="approver").set_value("Compras · Pedro Alves").run()
+    next(b for b in at.button if b.label == "Validar").click().run()
+    assert not at.exception
     assert runtime.erp.get_pr(1).state.value == "approved"
     assert "Concluído" in page(at)
+
+
+def test_an_urgent_request_waits_for_the_department_head_justification(app):
+    at, runtime = app
+    submit(at, "urgente")
+    assert "justificar a urgência" in page(at)
+    runtime.erp.add_quote("q1", "ana", 1, "S02", 1900.0)
+    at.radio(key="role").set_value("Aprovador").run()
+    at.radio(key="approver").set_value("Chefia · João Ferreira").run()
+    at.text_area[0].set_value("Prazo legal na sexta-feira.").run()
+    next(b for b in at.button if b.label == "Justificar urgência").click().run()
+    assert not at.exception
+    assert runtime.erp.get_pr(1).state.value == "approved"
+
+
+def test_a_request_without_budget_is_referred_to_management_control(app):
+    at, runtime = app
+    submit(at, "sem orcamento")
+    assert not at.exception
+    assert "controlo de gestão" in page(at)
+    assert runtime.erp.get_pr(1).state.value == "open"
 
 
 def test_recent_runs_can_be_reopened(app):

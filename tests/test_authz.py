@@ -40,6 +40,12 @@ def approval(action: Action = Action.APPROVE_PR, **overrides) -> HumanApproval:
     return HumanApproval(**data)
 
 
+def validation(**overrides) -> HumanApproval:
+    data = dict(approver="pedro", role="purchasing")
+    data.update(overrides)
+    return approval(**data)
+
+
 def test_below_first_threshold_agent_approves():
     verdict = authorize(Action.APPROVE_PR, ctx(500, cited_clauses=[]))
     assert verdict.allowed and verdict.code == "no_blockers"
@@ -79,8 +85,37 @@ def test_agent_cannot_approve_above_limit_without_human():
 
 
 def test_above_limit_with_valid_human_approval():
-    verdict = authorize(Action.APPROVE_PR, ctx(14000, approval=approval()))
+    verdict = authorize(Action.APPROVE_PR, ctx(14000, approval=approval(), validation=validation()))
     assert verdict.allowed and verdict.code == "human_approved"
+
+
+def test_the_direction_alone_does_not_approve_above_the_limit():
+    verdict = authorize(Action.APPROVE_PR, ctx(14000, approval=approval()))
+    assert not verdict.allowed and verdict.code == "validation_required"
+
+
+def test_purchasing_alone_does_not_approve_above_the_limit():
+    verdict = authorize(Action.APPROVE_PR, ctx(14000, validation=validation()))
+    assert verdict.code == "human_approval_required"
+
+
+def test_the_validation_must_come_from_purchasing_and_from_someone_else():
+    wrong_role = validation(role="director")
+    assert authorize(Action.APPROVE_PR, ctx(14000, approval=approval(), validation=wrong_role)).code == "wrong_role"
+    same = validation(approver="maria")
+    assert authorize(Action.APPROVE_PR, ctx(14000, approval=approval(), validation=same)).code == "same_person"
+
+
+def test_an_expired_or_smaller_validation_is_refused():
+    expired = validation(expires_at=NOW - timedelta(minutes=1))
+    assert authorize(Action.APPROVE_PR, ctx(14000, approval=approval(), validation=expired)).code == "approval_expired"
+    smaller = validation(approved_value_eur=9000)
+    assert authorize(Action.APPROVE_PR, ctx(14000, approval=approval(), validation=smaller)).code == "value_changed"
+
+
+def test_the_approval_must_come_from_the_direction():
+    other = approval(role="purchasing")
+    assert authorize(Action.APPROVE_PR, ctx(14000, approval=other, validation=validation())).code == "wrong_role"
 
 
 def test_above_limit_rejects_only_with_human_decision():

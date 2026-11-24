@@ -63,6 +63,8 @@ class Facts:
     questions: list[str] = field(default_factory=list)
     quotes_required: int | None = None
     quotes_found: int | None = None
+    budget_short: bool = False
+    urgency_unjustified: bool = False
     log: list[ToolCallRecord] = field(default_factory=list)
 
     def check(self, name: CheckName) -> Check | None:
@@ -81,10 +83,12 @@ class Facts:
         return self.quotes_required is not None and (self.quotes_found or 0) < self.quotes_required
 
 
-def quotes_required_for(value: float, urgent: bool, contract_in_force: bool) -> int:
+def quotes_required_for(
+    value: float, urgent: bool, contract_in_force: bool, urgency_justified: bool = False
+) -> int:
     if value < FIRST_THRESHOLD or contract_in_force:
         return 0
-    if urgent and value <= SECOND_THRESHOLD:
+    if urgent and urgency_justified and value <= SECOND_THRESHOLD:
         return 1
     return 2 if value <= SECOND_THRESHOLD else 3
 
@@ -185,9 +189,7 @@ def gather_facts(
                 facts.checks.append(Check(name=CheckName.BUDGET, result=CheckResult.OK, evidence=f"Orçamento disponível de {_money(available)}, suficiente para {_money(value)}."))
             else:
                 facts.checks.append(Check(name=CheckName.BUDGET, result=CheckResult.PROBLEM, evidence=f"Orçamento disponível de {_money(available)}, insuficiente para {_money(value)}."))
-                facts.questions.append(
-                    f"O centro de custo {cost_center} tem {_money(available)} disponíveis e o pedido é de {_money(value)}. Queres indicar outro centro de custo?"
-                )
+                facts.budget_short = True
 
     if not items:
         facts.checks.append(Check(name=CheckName.CATALOG, result=CheckResult.WARNING, evidence="O item não foi encontrado no catálogo."))
@@ -233,7 +235,15 @@ def gather_facts(
     if pr_id is None or value is None:
         facts.checks.append(Check(name=CheckName.QUOTES, result=CheckResult.NOT_CHECKED, evidence="Pedido ainda não registado ou sem valor."))
     else:
-        required = quotes_required_for(value, request.is_urgent, bool(in_force))
+        urgency_applies = request.is_urgent and FIRST_THRESHOLD <= value <= SECOND_THRESHOLD and not in_force
+        justified = False
+        justification = None
+        if urgency_applies:
+            found = _read(ctx, facts, "get_urgency_justification", {"pr_id": pr_id})
+            justified = found.ok and found.data["justified"]
+            justification = found.data["justification"] if justified else None
+            facts.urgency_unjustified = not justified
+        required = quotes_required_for(value, request.is_urgent, bool(in_force), justified)
         facts.quotes_required = required
         if required == 0:
             facts.checks.append(Check(name=CheckName.QUOTES, result=CheckResult.OK, evidence="A política não exige cotações para este pedido."))
@@ -241,5 +251,10 @@ def gather_facts(
             quotes = _read(ctx, facts, "get_quotes", {"pr_id": pr_id})
             facts.quotes_found = len({q["supplier_id"] for q in (quotes.data if quotes.ok else [])})
             result = CheckResult.OK if facts.quotes_found >= required else CheckResult.PROBLEM
-            facts.checks.append(Check(name=CheckName.QUOTES, result=result, evidence=f"{facts.quotes_found} cotações de fornecedores distintos, a política exige {required}."))
+            evidence = f"{facts.quotes_found} cotações de fornecedores distintos, a política exige {required}."
+            if justification:
+                evidence += f" Urgência justificada por escrito por {justification['by']} (cláusula 2.4)."
+            elif facts.urgency_unjustified:
+                evidence += " O pedido é urgente, mas falta a justificação escrita do responsável do departamento (cláusula 2.4)."
+            facts.checks.append(Check(name=CheckName.QUOTES, result=result, evidence=evidence))
     return facts

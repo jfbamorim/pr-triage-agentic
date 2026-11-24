@@ -82,10 +82,21 @@ def get_quotes(ctx: ToolContext, args: PrIdIn) -> ToolResult:
 def get_approval_status(ctx: ToolContext, args: PrIdIn) -> ToolResult:
     def read():
         approval = ctx.erp.get_human_approval(args.pr_id)
+        validation = ctx.erp.get_purchasing_validation(args.pr_id)
         return {
             "has_human_approval": approval is not None,
             "approval": approval.model_dump(mode="json") if approval else None,
+            "has_purchasing_validation": validation is not None,
+            "validation": validation.model_dump(mode="json") if validation else None,
         }
+
+    return guarded(read)
+
+
+def get_urgency_justification(ctx: ToolContext, args: PrIdIn) -> ToolResult:
+    def read():
+        found = ctx.erp.get_urgency_justification(args.pr_id)
+        return {"justified": found is not None, "justification": found.model_dump(mode="json") if found else None}
 
     return guarded(read)
 

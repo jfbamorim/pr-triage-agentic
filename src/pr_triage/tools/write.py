@@ -1,3 +1,5 @@
+import hashlib
+import json
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -23,6 +25,10 @@ class RegisterPrIn(BaseModel):
     urgent: bool = False
 
 
+class UpdatePrIn(RegisterPrIn):
+    pr_id: int
+
+
 class DecisionIn(BaseModel):
     pr_id: int
     policy_verdict: PolicyVerdict
@@ -32,7 +38,7 @@ class DecisionIn(BaseModel):
 
 class SendEmailIn(BaseModel):
     pr_id: int
-    kind: Literal["decision", "dossier"]
+    kind: Literal["decision", "dossier", "referral"]
     to: str
     subject: str = Field(min_length=1)
     body: str = Field(min_length=1)
@@ -52,6 +58,7 @@ def _auth_context(ctx: ToolContext, pr, **overrides) -> AuthContext:
         band=determine_band(pr.value_eur),
         proposed_by=ctx.actor,
         approval=ctx.erp.get_human_approval(pr.pr_id),
+        validation=ctx.erp.get_purchasing_validation(pr.pr_id),
         now=ctx.erp.clock(),
     )
     data.update(overrides)
@@ -67,6 +74,25 @@ def register_pr(ctx: ToolContext, args: RegisterPrIn) -> ToolResult:
         lambda: ctx.erp.register_pr(
             f"{ctx.run_id}:register_pr",
             ctx.actor,
+            args.requester_email,
+            args.item,
+            args.quantity,
+            args.value_eur,
+            args.cost_center,
+            args.category,
+            args.urgent,
+        )
+    )
+
+
+def update_pr(ctx: ToolContext, args: UpdatePrIn) -> ToolResult:
+    values = args.model_dump(mode="json", exclude={"pr_id"})
+    digest = hashlib.sha1(json.dumps(values, sort_keys=True).encode()).hexdigest()[:8]
+    return guarded(
+        lambda: ctx.erp.update_pr(
+            f"{ctx.run_id}:update_pr:{args.pr_id}:{digest}",
+            ctx.actor,
+            args.pr_id,
             args.requester_email,
             args.item,
             args.quantity,
@@ -121,6 +147,18 @@ def send_email(ctx: ToolContext, args: SendEmailIn) -> ToolResult:
             clauses = pr.cited_clauses
             action = Action.SEND_DECISION_EMAIL
             auth = _auth_context(ctx, pr, cited_clauses=clauses, executed_decision=executed)
+        elif args.kind == "referral":
+            person = ctx.erp.get_person(args.to)
+            if person is None or person.role.value != "controlling":
+                return failure("wrong_recipient", "A referral goes to management control.")
+            budget = ctx.erp.get_budget(pr.cost_center)
+            insufficient = budget is not None and budget.available_eur < pr.value_eur
+            unknown = _unknown_clauses(ctx, args.cited_clauses)
+            if unknown:
+                return failure("unknown_clause", f"These clauses do not exist: {unknown}.")
+            clauses = args.cited_clauses
+            action = Action.SEND_REFERRAL_EMAIL
+            auth = _auth_context(ctx, pr, cited_clauses=clauses, budget_insufficient=insufficient)
         else:
             person = ctx.erp.get_person(args.to)
             if person is None or person.role.value not in DOSSIER_RECIPIENT_ROLES:

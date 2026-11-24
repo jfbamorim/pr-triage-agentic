@@ -20,13 +20,18 @@ from agentic_views import (
 )
 from pr_triage.domain.labels import format_eur
 from pr_triage.erp.models import Role
-from pr_triage.supervisor.actions import record_human_decision, record_quote
-from pr_triage.supervisor.moves import quotes_short
+from pr_triage.supervisor.actions import record_human_decision, record_quote, record_urgency_justification
+from pr_triage.supervisor.moves import pending_roles, quotes_short
 from pr_triage.supervisor.state import RunStatus
 
 CSS_PATH = Path(__file__).parent / "style.css"
-APPROVER = "maria.santos@exemplo.pt"
+APPROVERS = {
+    "Direção · Maria Santos": ("maria.santos@exemplo.pt", "director"),
+    "Compras · Pedro Alves": ("pedro.alves@exemplo.pt", "purchasing"),
+    "Chefia · João Ferreira": ("joao.ferreira@exemplo.pt", "department_head"),
+}
 REQUESTER_ROLE, APPROVER_ROLE = "Requerente", "Aprovador"
+ROLE_NAMES = {"director": "Direção", "purchasing": "Compras", "department_head": "Chefia"}
 AVATARS = {"user": "🧑", "assistant": "🤖", "approver": "🧑‍💼"}
 SCENARIOS = [
     ("Aprovação automática", "ana.silva@exemplo.pt", "Preciso de 2 monitores para a equipa, cerca de 600 euros",
@@ -36,11 +41,13 @@ SCENARIOS = [
     ("Cotações em falta", "rui.costa@exemplo.pt", "Preciso de uma consultoria de 3000 euros, 10 dias, centro de custo CC-FAC-200",
      "Pausa e pede cotações; retoma quando forem registadas."),
     ("Acima do limite", "ana.silva@exemplo.pt", "Preciso de 10 portáteis, 14000 euros",
-     "Acima de 5 000 €: dossiê para a direção, só avança com aprovação humana."),
+     "Acima de 5 000 €: precisa da aprovação da direção e da validação de Compras."),
+    ("Urgência", "rui.costa@exemplo.pt", "Preciso com urgência de uma consultoria de 2000 euros, 5 dias, centro de custo CC-FAC-200",
+     "Com urgência, uma cotação basta se a chefia justificar por escrito (cláusula 2.4)."),
     ("Memória", "tiago.lopes@exemplo.pt", "Preciso de 3 monitores, 900 euros",
      "Sem centro de custo: sugere o último usado, com origem e validade."),
     ("Orçamento insuficiente", "sofia.matos@exemplo.pt", "Preciso de 5 monitores, 1445 euros",
-     "Confirma o saldo no ERP e não aprova."),
+     "Sem orçamento no centro de custo: encaminha o pedido para o controlo de gestão."),
 ]
 
 
@@ -118,11 +125,19 @@ def run_pending(runtime, boxes) -> None:
         record_quote(runtime.erp, current, args["supplier_id"], args["amount"])
         say(run_id, "user", f"Registei uma cotação de {format_eur(args['amount'])} do fornecedor {args['supplier_name']}.")
         state = orchestrator.resume(run_id)
+    elif kind == "justify":
+        current = runtime.store.load(run_id)
+        record_urgency_justification(runtime.erp, current, args["approver"], args["text"])
+        person = runtime.erp.get_person(args["approver"])
+        say(run_id, "approver", f"{person.name} (Chefia) justificou a urgência por escrito: «{args['text']}»")
+        state = orchestrator.resume(run_id)
+        st.session_state.run_id = run_id
     elif kind == "decision":
         current = runtime.store.load(run_id)
-        record_human_decision(runtime.erp, current, APPROVER, args["approve"])
-        verdict = "aprovou" if args["approve"] else "rejeitou"
-        say(run_id, "approver", f"Maria Santos {verdict} o pedido nº {current.pr_id}.")
+        record_human_decision(runtime.erp, current, args["approver"], args["approve"])
+        person = runtime.erp.get_person(args["approver"])
+        verdict = ("aprovou" if args["approve"] else "rejeitou") if person.role.value == "director" else "validou"
+        say(run_id, "approver", f"{person.name} ({ROLE_NAMES[person.role.value]}) {verdict} o pedido nº {current.pr_id}.")
         state = orchestrator.resume(run_id)
         st.session_state.run_id = run_id
     else:
@@ -184,11 +199,23 @@ def conversation(runtime, state) -> None:
 
 
 def approvals(runtime) -> None:
-    waiting = [s for s in runtime.store.list_recent(30) if s.status == RunStatus.WAITING_HUMAN]
-    st.markdown("**Maria Santos · Direção** — pedidos à espera da tua decisão")
-    if not waiting:
-        st.markdown('<div class="muted">Nenhum pedido pendente.</div>', unsafe_allow_html=True)
-    for state in waiting:
+    who = st.radio("Aprovador", list(APPROVERS), key="approver", horizontal=True, label_visibility="collapsed")
+    email, role = APPROVERS[who]
+    if role == "department_head":
+        urgencies(runtime, email)
+        return
+    mine = []
+    for state in runtime.store.list_recent(30):
+        if state.status != RunStatus.WAITING_HUMAN:
+            continue
+        pending = pending_roles(
+            state, runtime.erp.get_human_approval(state.pr_id), runtime.erp.get_purchasing_validation(state.pr_id)
+        )
+        if role in pending:
+            mine.append((state, pending))
+    if not mine:
+        st.markdown('<div class="muted">Nenhum pedido à espera da tua decisão.</div>', unsafe_allow_html=True)
+    for state, pending in mine:
         dossier = next((m for m in runtime.erp.get_outbox(state.pr_id) if m.kind == "dossier"), None)
         with st.container(border=True):
             st.markdown(
@@ -196,13 +223,57 @@ def approvals(runtime) -> None:
                 f"{format_eur(state.request.estimated_value_eur)}</div>",
                 unsafe_allow_html=True,
             )
+            others = [ROLE_NAMES[r] for r in pending if r != role]
+            if others:
+                st.caption("Também falta: " + ", ".join(others))
+            elif role == "purchasing":
+                st.caption("A direção já aprovou; falta a validação de Compras.")
             if dossier:
                 st.write(dossier.body)
             left, right, _ = st.columns([1, 1, 4])
-            left.button("Aprovar", key=f"ap-{state.run_id}", type="primary", on_click=queue, args=("decision",),
-                        kwargs={"run_id": state.run_id, "approve": True})
-            right.button("Rejeitar", key=f"rj-{state.run_id}", on_click=queue, args=("decision",),
-                         kwargs={"run_id": state.run_id, "approve": False})
+            left.button(
+                "Aprovar" if role == "director" else "Validar",
+                key=f"ap-{state.run_id}-{role}",
+                type="primary",
+                on_click=queue,
+                args=("decision",),
+                kwargs={"run_id": state.run_id, "approve": True, "approver": email},
+            )
+            if role == "director":
+                right.button(
+                    "Rejeitar",
+                    key=f"rj-{state.run_id}",
+                    on_click=queue,
+                    args=("decision",),
+                    kwargs={"run_id": state.run_id, "approve": False, "approver": email},
+                )
+
+
+def urgencies(runtime, email: str) -> None:
+    waiting = [
+        s for s in runtime.store.list_recent(30)
+        if s.status == RunStatus.WAITING_USER and s.investigation is not None and s.investigation.urgency_unjustified
+    ]
+    if not waiting:
+        st.markdown('<div class="muted">Nenhuma urgência à espera de justificação.</div>', unsafe_allow_html=True)
+    for state in waiting:
+        with st.container(border=True):
+            st.markdown(
+                f'<div class="card-title">Pedido nº {state.pr_id} · {state.request.item} · '
+                f"{format_eur(state.request.estimated_value_eur)} · urgente</div>",
+                unsafe_allow_html=True,
+            )
+            st.caption("Cláusula 2.4: com urgência, basta uma cotação se a chefia justificar por escrito.")
+            text = st.text_area("Justificação", key=f"why-{state.run_id}", height=80)
+            st.button(
+                "Justificar urgência",
+                key=f"jf-{state.run_id}",
+                type="primary",
+                disabled=not text.strip(),
+                on_click=queue,
+                args=("justify",),
+                kwargs={"run_id": state.run_id, "approver": email, "text": text.strip()},
+            )
 
 
 def how_it_decided(runtime, state) -> None:
